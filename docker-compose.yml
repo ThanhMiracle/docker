@@ -15,7 +15,7 @@ services:
     depends_on: [db, minio]
 
   frontend:
-    build: ./frontend
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.0
     environment:
       - VITE_API_BASE=http://api:8000
     ports: ["3000:80"]

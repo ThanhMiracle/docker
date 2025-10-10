@@ -1,29 +1,35 @@
-{
-  # optional: email you@example.com
-}
+# Caddyfile for single-host (public IP) with path-based routing and HTTP only.
+# Replace <PUBLIC_IP> below in MINIO_PUBLIC_URL (.env) if you need absolute URLs.
+# If you insist on HTTPS without a domain, you could add "tls internal" here
+# to use a self-signed certificate (browsers will warn). Example:
+# :443 {
+#   tls internal
+#   ... same handles ...
+# }
 
-public-ip {
+:80 {
   encode zstd gzip
 
-  # Frontend SPA
-  handle_path / {
-    reverse_proxy frontend:80
-  }
-
-  # FastAPI backend
+  # FastAPI backend under /api
   handle_path /api* {
     reverse_proxy api:8000
   }
 
-  # Public objects from MinIO bucket "uploads"
+  # Public objects from MinIO bucket "uploads" (simple static reads)
   handle_path /minio-public/* {
+    uri prepend /uploads
     uri strip_prefix /minio-public
     reverse_proxy minio:9000
   }
-}
 
-# Optional: MinIO Console on subdomain
-public-ip {
-  encode zstd gzip
-  reverse_proxy minio:9001
+  # Optional: expose MinIO Console at /minio-console (NOT recommended on the open internet)
+  # handle_path /minio-console/* {
+  #   uri strip_prefix /minio-console
+  #   reverse_proxy minio:9001
+  # }
+
+  # Frontend SPA as the default handler
+  handle {
+    reverse_proxy frontend:80
+  }
 }
