@@ -1,0 +1,47 @@
+services:
+  api:
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET}
+      - MINIO_SECURE=${MINIO_SECURE}
+      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL}
+    ports: []
+    networks: [appnet]
+
+  frontend:
+    environment:
+      - VITE_API_BASE=${VITE_API_BASE}
+    ports: []
+    networks: [appnet]
+
+  db:
+    networks: [appnet]
+
+  minio:
+    command: server /data --console-address ":9001"
+    ports: []
+    networks: [appnet]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [appnet]
+
+networks:
+  appnet:
+
+volumes:
+  caddy_data:
+  caddy_config:

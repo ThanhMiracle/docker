@@ -1,0 +1,29 @@
+{
+  # optional: email you@example.com
+}
+
+public-ip {
+  encode zstd gzip
+
+  # Frontend SPA
+  handle_path / {
+    reverse_proxy frontend:80
+  }
+
+  # FastAPI backend
+  handle_path /api* {
+    reverse_proxy api:8000
+  }
+
+  # Public objects from MinIO bucket "uploads"
+  handle_path /minio-public/* {
+    uri strip_prefix /minio-public
+    reverse_proxy minio:9000
+  }
+}
+
+# Optional: MinIO Console on subdomain
+public-ip {
+  encode zstd gzip
+  reverse_proxy minio:9001
+}
