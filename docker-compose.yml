@@ -1,6 +1,6 @@
 services:
   api:
-    build: ./backend
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.2
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
       - JWT_SECRET=change-me-please

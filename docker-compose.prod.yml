@@ -1,8 +1,49 @@
+version: "3.9"
+
+networks:
+  appnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  minio_data:
+
 services:
+  # Reverse proxy - cổng public duy nhất
+  nginx:
+    image: nginx:alpine
+    container_name: proxy
+    depends_on:
+      - frontend
+      - api
+      - minio
+    ports:
+      - "80:80"        # Mở port 80 ra Internet
+      # Nếu muốn HTTPS bằng reverse proxy khác/certbot thì thêm 443 ở đây
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+    networks: [appnet]
+
+  # Frontend SPA (đang dùng image có sẵn của bạn)
+  frontend:
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.0
+    container_name: frontend
+    environment:
+      # Quan trọng: để FE gọi BE qua Nginx trên /api
+      - VITE_API_BASE=http://$HOSTNAME_OR_IP/api
+      # Hoặc thay $HOSTNAME_OR_IP bằng domain/IP thật, ví dụ:
+      # - VITE_API_BASE=http://your-domain.com/api
+    networks: [appnet]
+    restart: unless-stopped
+
+  # Backend FastAPI
   api:
     image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.2
+    container_name: api
     environment:
-      - DATABASE_URL=${DATABASE_URL}                # e.g. postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/mydb
+      # ví dụ: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/mydb
+      - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-120}
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
@@ -10,63 +51,38 @@ services:
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_BUCKET=${MINIO_BUCKET:-uploads}
       - MINIO_SECURE=${MINIO_SECURE:-false}
-      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL}       # e.g. http://<PUBLIC_IP>/minio-public
-    networks: [appnet]
-    restart: unless-stopped
+      # Dùng path /minio-public qua Nginx để lộ file public
+      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL:-http://$HOSTNAME_OR_IP/minio-public}
     depends_on: [db, minio]
-    # no host ports exposed
-
-  frontend:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.0
-    environment:
-      - VITE_API_BASE=${VITE_API_BASE:-/api}       # use path-based to avoid hardcoding the IP
     networks: [appnet]
     restart: unless-stopped
-    depends_on: [api]
 
+  # PostgreSQL
   db:
-    image: postgres:15
+    image: postgres:15-alpine
+    container_name: db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: mydb
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-mydb}
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     networks: [appnet]
     restart: unless-stopped
 
+  # MinIO (object storage)
   minio:
     image: minio/minio:latest
+    container_name: minio
     command: server /data --console-address ":9001"
     environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
     volumes:
       - minio_data:/data
     networks: [appnet]
     restart: unless-stopped
-
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    # Only HTTP on port 80 because we don't have a domain
-    ports:
-      - "80:80"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks: [appnet]
-    depends_on:
-      - api
-      - frontend
-      - minio
-
-networks:
-  appnet:
-
-volumes:
-  db_data:
-  minio_data:
-  caddy_data:
-  caddy_config:
+    # Không mở port public trực tiếp; truy cập qua Nginx path /minio-public
+    # Nếu cần vào MinIO Console từ Internet, có thể thêm:
+    # ports:
+    #   - "9001:9001"
