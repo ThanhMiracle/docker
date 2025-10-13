@@ -29,7 +29,7 @@ services:
     container_name: frontend
     environment:
       # Quan trọng: để FE gọi BE qua Nginx trên /api
-      - VITE_API_BASE=http://20.2.233.170/api
+      - VITE_API_BASE=http://$HOSTNAME_OR_IP/api
       # Hoặc thay $HOSTNAME_OR_IP bằng domain/IP thật, ví dụ:
       # - VITE_API_BASE=http://your-domain.com/api
     networks: [appnet]
@@ -60,7 +60,7 @@ services:
     container_name: db
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
