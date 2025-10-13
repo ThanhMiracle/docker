@@ -1,5 +1,5 @@
 ############################################
-# main.tf — Create Ubuntu VM with Docker
+# main.tf — Create N Ubuntu VMs with Docker
 ############################################
 
 terraform {
@@ -13,11 +13,11 @@ terraform {
 }
 
 variable "subscription_id" { type = string }
+
 provider "azurerm" {
   features {}
   subscription_id = var.subscription_id
 }
-
 
 ############################
 # ====== VARIABLES ======  #
@@ -30,7 +30,7 @@ variable "prefix" {
 }
 
 variable "location" {
-  description = "Azure region"
+  description = "Azure region (e.g. East Asia, Southeast Asia, East US)"
   type        = string
   default     = "East Asia"
 }
@@ -52,8 +52,15 @@ variable "vm_size" {
   default     = "Standard_D2s_v3"
 }
 
+# NEW: how many identical VMs to create
+variable "vm_count" {
+  description = "Number of identical VMs to create"
+  type        = number
+  default     = 2
+}
+
 ############################
-# ===== RESOURCES ======== #
+# ===== SHARED RESOURCES ==#
 ############################
 
 resource "azurerm_resource_group" "rg" {
@@ -75,14 +82,6 @@ resource "azurerm_subnet" "subnet" {
   address_prefixes     = ["10.10.1.0/24"]
 }
 
-resource "azurerm_public_ip" "pip" {
-  name                = "${var.prefix}-pip"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
-  allocation_method   = "Static"
-  sku                 = "Standard"
-}
-
 resource "azurerm_network_security_group" "nsg" {
   name                = "${var.prefix}-nsg"
   location            = azurerm_resource_group.rg.location
@@ -100,7 +99,7 @@ resource "azurerm_network_security_group" "nsg" {
     destination_address_prefix = "*"
   }
 
-  # Mở 80 cho web (nếu cần public web)
+  # HTTP
   security_rule {
     name                       = "Allow-HTTP"
     priority                   = 1010
@@ -113,7 +112,7 @@ resource "azurerm_network_security_group" "nsg" {
     destination_address_prefix = "*"
   }
 
-  # Mở 443 nếu sau này dùng HTTPS
+  # HTTPS
   security_rule {
     name                       = "Allow-HTTPS"
     priority                   = 1020
@@ -127,8 +126,22 @@ resource "azurerm_network_security_group" "nsg" {
   }
 }
 
+############################
+# === PER-VM RESOURCES ====#
+############################
+
+resource "azurerm_public_ip" "pip" {
+  count               = var.vm_count
+  name                = "${var.prefix}-pip-${count.index + 1}"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
 resource "azurerm_network_interface" "nic" {
-  name                = "${var.prefix}-nic"
+  count               = var.vm_count
+  name                = "${var.prefix}-nic-${count.index + 1}"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
@@ -136,62 +149,35 @@ resource "azurerm_network_interface" "nic" {
     name                          = "ipconfig1"
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.pip.id
+    public_ip_address_id          = azurerm_public_ip.pip[count.index].id
   }
 }
 
 resource "azurerm_network_interface_security_group_association" "nic_nsg" {
-  network_interface_id      = azurerm_network_interface.nic.id
+  count                     = var.vm_count
+  network_interface_id      = azurerm_network_interface.nic[count.index].id
   network_security_group_id = azurerm_network_security_group.nsg.id
 }
 
-# Cloud-init script: cài Docker + Compose plugin và thêm user vào group docker
-locals {
-  cloud_init = <<-CLOUDINIT
-  #cloud-config
-  package_update: true
-  packages:
-    - ca-certificates
-    - curl
-    - gnupg
-  runcmd:
-    - install -m 0755 -d /etc/apt/keyrings
-    - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    - chmod a+r /etc/apt/keyrings/docker.gpg
-    - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
-    - apt-get update
-    - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    - systemctl enable docker
-    - systemctl start docker
-    - usermod -aG docker ${var.admin_username}
-    - su - ${var.admin_username}
-    - git clone https://github.com/ThanhMiracle/docker.git
-    - cd docker 
-    - docker compose -f docker-compose.prod.yml up -d
-   
-  CLOUDINIT
-}
-
 resource "azurerm_linux_virtual_machine" "vm" {
-  name                = "${var.prefix}"
+  count               = var.vm_count
+  name                = "${var.prefix}-${count.index + 1}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   size                = var.vm_size
   admin_username      = var.admin_username
-  network_interface_ids = [
-    azurerm_network_interface.nic.id
-  ]
+  network_interface_ids = [azurerm_network_interface.nic[count.index].id]
 
-  # Ubuntu 24.04 LTS
+  # Ubuntu 24.04 LTS (canonical/ubuntu-24_04-lts/server)
   source_image_reference {
-  publisher = "canonical"
-  offer     = "ubuntu-24_04-lts"
-  sku       = "server"
-  version   = "latest"
-}
+    publisher = "canonical"
+    offer     = "ubuntu-24_04-lts"
+    sku       = "server"
+    version   = "latest"  # có thể pin: "24.04.202510010"
+  }
 
   os_disk {
-    name                 = "${var.prefix}-osdisk"
+    name                 = "${var.prefix}-osdisk-${count.index + 1}"
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
     disk_size_gb         = 30
@@ -202,12 +188,17 @@ resource "azurerm_linux_virtual_machine" "vm" {
     public_key = var.ssh_public_key
   }
 
-  custom_data = base64encode(local.cloud_init)
+  custom_data = base64encode(
+    templatefile("${path.module}/cloud-init.yaml.tftpl", {
+      username  = var.admin_username
+      public_ip = azurerm_public_ip.pip[count.index].ip_address
+    })
+  )
 
-  # Optional tags
   tags = {
     project = var.prefix
     role    = "docker-host"
+    node    = tostring(count.index + 1)
   }
 }
 
@@ -215,12 +206,15 @@ resource "azurerm_linux_virtual_machine" "vm" {
 # ======= OUTPUTS ======== #
 ############################
 
-output "public_ip" {
-  description = "Public IP of the VM"
-  value       = azurerm_public_ip.pip.ip_address
+output "public_ips" {
+  description = "Public IPs of all VMs"
+  value       = azurerm_public_ip.pip[*].ip_address
 }
 
-output "ssh_command" {
-  description = "SSH command"
-  value       = "ssh ${var.admin_username}@${azurerm_public_ip.pip.ip_address}"
+output "ssh_commands" {
+  description = "SSH commands for all VMs"
+  value       = [
+    for ip in azurerm_public_ip.pip[*].ip_address :
+    "ssh ${var.admin_username}@${ip}"
+  ]
 }

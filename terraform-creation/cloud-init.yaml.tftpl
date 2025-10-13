@@ -1,0 +1,48 @@
+#cloud-config
+package_update: true
+
+write_files:
+  - path: /home/${username}/docker/.env
+    permissions: '0644'
+    content: |
+      # Tự động chèn IP public của VM này
+      #Hostname or public_ip
+      VITE_API_BASE=http://${public_ip}/api
+      MINIO_PUBLIC_URL=http://${public_ip}/minio-public
+      #HOSTNAME_OR_IP=http://${public_ip}
+
+
+      # Postgres
+      POSTGRES_USER=postgres
+      POSTGRES_PASSWORD=postgres
+      POSTGRES_DB=mydb
+
+      # API
+      DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
+      JWT_SECRET=change_me_please
+      JWT_EXPIRE_MINUTES=120
+
+      # MinIO
+      MINIO_ACCESS_KEY=minioadmin
+      MINIO_SECRET_KEY=minioadmin
+      MINIO_ENDPOINT=http://minio:9000
+      MINIO_BUCKET=uploads
+      MINIO_SECURE=false
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+
+runcmd:
+  - sudo apt update
+  - sudo apt install apt-transport-https ca-certificates curl software-properties-common
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+  - sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"
+  - sudo apt install docker-ce
+  - sudo usermod -aG docker ${username}
+  - su - ${username}
+  - git clone https://github.com/ThanhMiracle/docker.git
+  - cd docker
+  - docker compose -f docker-compose.prod.yml up -d

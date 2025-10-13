@@ -29,7 +29,7 @@ services:
     container_name: frontend
     environment:
       # Quan trọng: để FE gọi BE qua Nginx trên /api
-      - VITE_API_BASE=http://$HOSTNAME_OR_IP/api
+      - VITE_API_BASE=${VITE_API_BASE}
       # Hoặc thay $HOSTNAME_OR_IP bằng domain/IP thật, ví dụ:
       # - VITE_API_BASE=http://your-domain.com/api
     networks: [appnet]
