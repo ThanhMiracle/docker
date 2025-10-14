@@ -2,7 +2,7 @@
 package_update: true
 
 write_files:
-  - path: /home/${username}/docker/.env
+  - path: /home/${username}/.env
     permissions: '0644'
     content: |
       # Tự động chèn IP public của VM này
@@ -36,13 +36,30 @@ packages:
   - git
 
 runcmd:
-  - sudo apt update
-  - sudo apt install apt-transport-https ca-certificates curl software-properties-common
-  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-  - sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"
-  - sudo apt install docker-ce
+  # 1) Add Docker GPG key to keyrings (không dùng apt-key)
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+
+  # 2) Lấy codename động (jammy/noble...) và add repo với signed-by
+  - bash -lc 'source /etc/os-release; echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" > /etc/apt/sources.list.d/docker.list'
+
+  # 3) Update lại index và cài đủ gói Docker
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+  # 4) Cho user vào group docker (thay azureuser bằng user của bạn)
   - sudo usermod -aG docker ${username}
-  - su - ${username}
+  - newgrp docker
+
+  # 6) Cấp quyền 
+  - sudo chown -R ${username}:${username} /home/${username}
+  - sudo chmod -R 755 /home/${username}
+
+  # 7) (Tuỳ chọn) clone repo dưới quyền user thường
   - git clone https://github.com/ThanhMiracle/docker.git
-  - cd docker
-  - docker compose -f docker-compose.prod.yml up -d
+  - cp /home/${username}/docker/.env /home/${username}/docker/.env 
+  - docker compose -f docker-compose.prod.yml up -d || true'
+
+
+  
