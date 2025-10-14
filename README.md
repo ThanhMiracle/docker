@@ -71,3 +71,8 @@ This project is a simple fullstack web application demonstrating modern developm
 - Provision and manage cloud infrastructure using Terraform
 
 For more details, see the code and comments in each directory.
+
+
+### Reload/restart Nginx để nó resolve lại DNS:
+
+docker exec proxy nginx -s reload || docker restart proxy

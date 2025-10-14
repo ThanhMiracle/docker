@@ -58,8 +58,8 @@ runcmd:
 
   # 7) (Tuỳ chọn) clone repo dưới quyền user thường
   - git clone https://github.com/ThanhMiracle/docker.git
-  - cp /home/${username}/docker/.env /home/${username}/docker/.env 
-  - docker compose -f docker-compose.prod.yml up -d || true'
+  - cp /home/${username}/.env /home/${username}/docker/.env 
+  - docker compose -f docker-compose.prod.yml up -d || true
 
 
   
