@@ -1,5 +1,5 @@
 import { useState } from 'react'
-const API = import.meta.env.VITE_API_BASE || 'http://${VITE_API_BASE}'
+const API = `http://${import.meta.env.VITE_API_BASE}`
 export default function Register() {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('')
   const register = async () => {

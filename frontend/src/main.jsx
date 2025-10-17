@@ -12,7 +12,7 @@ function Nav() {
   const nav = useNavigate()
   const logout = async () => {
     const token = localStorage.getItem('token')
-    const API = import.meta.env.VITE_API_BASE || 'http://${VITE_API_BASE}'
+    const API = `http://${import.meta.env.VITE_API_BASE}`
     if (token) await fetch(`${API}/auth/logout`, { method:'POST', headers:{ 'Authorization': `Bearer ${token}` } })
     localStorage.removeItem('token')
     nav('/login')

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-const API = import.meta.env.VITE_API_BASE || 'http://${VITE_API_BASE}'
+const API = `http://${import.meta.env.VITE_API_BASE}`
 export default function MyProducts() {
   const [items, setItems] = useState([])
   const [q, setQ] = useState('')

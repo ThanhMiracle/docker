@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-const API = import.meta.env.VITE_API_BASE || 'http://${VITE_API_BASE}'
+const API = `http://${import.meta.env.VITE_API_BASE}`
 export default function Edit() {
   const { id } = useParams()
   const nav = useNavigate()
