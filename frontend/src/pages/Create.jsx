@@ -1,5 +1,5 @@
 import { useState } from 'react'
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const API = import.meta.env.VITE_API_BASE || 'http://${VITE_API_BASE}'
 export default function Create() {
   const [name, setName] = useState(''); const [price, setPrice] = useState('')
   const [file, setFile] = useState(null); const [description, setDescription] = useState('')
