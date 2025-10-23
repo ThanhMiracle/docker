@@ -50,7 +50,7 @@ MINIO_SECRET_KEY   = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET       = os.getenv("MINIO_BUCKET", "uploads")
 MINIO_SECURE_FLAG  = _as_bool(os.getenv("MINIO_SECURE", "false"), default=False)
 
-MINIO_PUBLIC_URL   = os.getenv("MINIO_PUBLIC_URL", "http://localhost:9000")  # ví dụ: http://<PUBLIC_IP>/minio-public
+MINIO_PUBLIC_URL   = os.getenv("MINIO_PUBLIC_URL")  # ví dụ: http://<PUBLIC_IP>/minio-public
 
 # Chuẩn hoá endpoint cho Minio client
 MINIO_ENDPOINT, MINIO_SECURE_BOOL = _normalize_minio_endpoint(MINIO_ENDPOINT_RAW, MINIO_SECURE_FLAG)
