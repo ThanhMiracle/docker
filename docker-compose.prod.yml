@@ -30,10 +30,12 @@ services:
    
     networks: [appnet]
     restart: unless-stopped
+    depends_on:
+      - api
 
   # Backend FastAPI
   api:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.2
+    build: ./backend
     container_name: api
     environment:
       - DATABASE_URL=${DATABASE_URL}

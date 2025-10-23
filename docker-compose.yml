@@ -1,6 +1,7 @@
 services:
   api:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.2
+    build: ./backend
+    container_name: api
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
       - JWT_SECRET=change-me-please
@@ -13,23 +14,32 @@ services:
       - MINIO_PUBLIC_URL=http://localhost:9000
     ports: ["8000:8000"]
     depends_on: [db, minio]
+    networks:
+      - appnet
 
   frontend:
     build: ./frontend
+    container_name: frontend
     ports: ["3000:80"]
     depends_on: [api]
+    networks:
+      - appnet
 
   db:
     image: postgres:15
+    container_name: db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: mydb
     volumes:
       - db_data:/var/lib/postgresql/data
+    networks:
+      - appnet
 
   minio:
     image: minio/minio:latest
+    container_name: minio
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=minioadmin
@@ -39,7 +49,13 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
+    networks:
+      - appnet
 
 volumes:
   db_data:
   minio_data:
+
+networks:
+  appnet:
+    driver: bridge

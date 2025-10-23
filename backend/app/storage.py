@@ -44,10 +44,10 @@ def _url_join(a: str, b: str) -> str:
 
 # ---- Read env --------------------------------------------------------------
 
-MINIO_ENDPOINT_RAW = os.getenv("MINIO_ENDPOINT", "minio:9000")  # có thể là 'minio:9000' hoặc 'http://minio:9000'
-MINIO_ACCESS_KEY   = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY   = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-MINIO_BUCKET       = os.getenv("MINIO_BUCKET", "uploads")
+MINIO_ENDPOINT_RAW = os.getenv("MINIO_ENDPOINT")  # có thể là 'minio:9000' hoặc 'http://minio:9000'
+MINIO_ACCESS_KEY   = os.getenv("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY   = os.getenv("MINIO_SECRET_KEY")
+MINIO_BUCKET       = os.getenv("MINIO_BUCKET")
 MINIO_SECURE_FLAG  = _as_bool(os.getenv("MINIO_SECURE", "false"), default=False)
 
 MINIO_PUBLIC_URL   = os.getenv("MINIO_PUBLIC_URL")  # ví dụ: http://<PUBLIC_IP>/minio-public
