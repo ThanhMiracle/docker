@@ -78,25 +78,25 @@ For more details, see the code and comments in each directory.
 docker exec proxy nginx -s reload || docker restart proxy
 
 
-### Add .env file with this structure
-# Postgres
+## Add .env file with this structure for product
+### Postgres
 POSTGRES_USER=
 POSTGRES_PASSWORD=
 POSTGRES_DB=
 
-# API
-DATABASE_URL=
-JWT_SECRET=
-JWT_EXPIRE_MINUTES=
+### API
+- DATABASE_URL=
+- JWT_SECRET=
+- JWT_EXPIRE_MINUTES=
 
-# MinIO
-MINIO_ACCESS_KEY=
-MINIO_SECRET_KEY=
-MINIO_ENDPOINT=http://minio:9000
-MINIO_BUCKET=uploads
-MINIO_SECURE=false
+### MinIO
+- MINIO_ACCESS_KEY=
+- MINIO_SECRET_KEY=
+- MINIO_ENDPOINT=http://minio:9000
+- MINIO_BUCKET=uploads
+- MINIO_SECURE=false
 
-# Expose public URLs
-MINIO_PUBLIC_URL=http://{public_IP}/minio-public
+### Expose public URLs
+- MINIO_PUBLIC_URL=http://{public_IP}/minio-public
 
-#VITE_API_BASE=http://{public_IP}/api
+- VITE_API_BASE=http://{public_IP}/api
