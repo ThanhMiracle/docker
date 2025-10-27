@@ -14,8 +14,8 @@ COPY . .
 
 # (tùy) cho phép build-time fallback, để dev local vẫn dùng import.meta.env.VITE_API_BASE
 # Nếu bạn không cần fallback này nữa thì có thể bỏ ARG/ENV dưới đây
-ARG VITE_API_BASE
-ENV VITE_API_BASE=$VITE_API_BASE
+ARG API_BASE
+ENV API_BASE=$API_BASE
 
 # build ra dist/
 RUN npm run build

@@ -18,7 +18,8 @@ services:
       - appnet
 
   frontend:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.2
+    #image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.2
+    build: ./frontend
       
     container_name: frontend
     environment:
