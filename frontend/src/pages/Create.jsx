@@ -11,7 +11,7 @@ function getApiBase() {
   if (import.meta?.env?.VITE_API_BASE) {
     return import.meta.env.VITE_API_BASE
   }
-  return 'localhost:8000'
+  //return 'localhost:8000'
 }
 
 // Ghép URL chuẩn có http://

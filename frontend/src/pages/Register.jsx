@@ -2,13 +2,14 @@ import { useState } from 'react'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
+  //console.log('Getting API base URL', import.meta.env.VITE_API_BASE)
   if (typeof window !== 'undefined' && window.__ENV__ && window.__ENV__.API_BASE) {
     return window.__ENV__.API_BASE
   }
   if (import.meta?.env?.VITE_API_BASE) {
     return import.meta.env.VITE_API_BASE
   }
-  return 'localhost:8000'
+  //return 'localhost:8000'
 }
 
 // Chuẩn hoá để đảm bảo có protocol

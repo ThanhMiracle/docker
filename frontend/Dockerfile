@@ -2,33 +2,32 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# cài deps
+# 1. Cài deps
 COPY package*.json ./
 RUN npm install
 
-# copy source
+# 2. Copy source code
 COPY . .
 
-# build ra thư mục dist/
+# 3. Nhận biến từ docker-compose build args
+#    docker-compose.yaml sẽ truyền args:
+#    build:
+#      args:
+#        VITE_API_BASE: "http://api.example.com"
+ARG VITE_API_BASE
+ENV VITE_API_BASE=$VITE_API_BASE
+
+# 4. Build ra thư mục dist (Vite sẽ embed import.meta.env.VITE_API_BASE)
 RUN npm run build
+
 
 # Stage 2: chạy Nginx để serve static
 FROM nginx:alpine AS runtime
 WORKDIR /usr/share/nginx/html
 
-# copy build output vào nginx document root
+# Copy build output (static files) sang Nginx document root
 COPY --from=build /app/dist . 
 
-# copy env template và đặt tên env.js (sẽ bị patch lúc container start)
-COPY public/env.template.js ./env.js
-
-# entrypoint script để inject biến môi trường khi container khởi động
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
-
-# (tuỳ bạn) nếu SPA cần luôn trả index.html cho mọi route, bạn có thể thêm nginx.conf custom.
-# Ví dụ: uncomment nếu bạn có file cấu hình tùy chỉnh
-# COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-ENTRYPOINT ["/docker-entrypoint.sh"]
+# Dùng nginx default config
+EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

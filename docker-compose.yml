@@ -1,6 +1,6 @@
 services:
   api:
-    build: ./backend
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.3
     container_name: api
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
@@ -18,10 +18,12 @@ services:
       - appnet
 
   frontend:
-    build: ./frontend
+    build : 
+      context: ./frontend
+      args:
+        VITE_API_BASE: "http://localhost:8000"
     container_name: frontend
-    environment:
-      - VITE_API_BASE=http://localhost:8000
+
     ports: ["3000:80"]
     depends_on: [api]
     networks:
