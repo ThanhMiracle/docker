@@ -99,4 +99,4 @@ MINIO_SECURE=false
 # Expose public URLs
 MINIO_PUBLIC_URL=http://{public_IP}/minio-public
 
-#VITE_API_BASE=http://{public_IP}/api (phần này khai báo bên file env.development của front-end)
+#VITE_API_BASE=http://{public_IP}/api
