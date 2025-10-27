@@ -99,4 +99,4 @@ POSTGRES_DB=
 ### Expose public URLs
 - MINIO_PUBLIC_URL=http://{public_IP}/minio-public
 
-- VITE_API_BASE=http://{public_IP}/api
+- VITE_API_BASE={public_IP}/api
