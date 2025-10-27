@@ -1,33 +1,40 @@
-# Stage 1: build ứng dụng Vite/React
+# ---------- Stage 1: build frontend ----------
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# 1. Cài deps
+# cài deps
 COPY package*.json ./
+# nếu bạn đang dùng npm ci với lockfile thì:
+# RUN npm ci
+# còn nếu lockfile được tạo bên trong image thì bạn có thể đang dùng:
 RUN npm install
 
-# 2. Copy source code
+# copy source code
 COPY . .
 
-# 3. Nhận biến từ docker-compose build args
-#    docker-compose.yaml sẽ truyền args:
-#    build:
-#      args:
-#        VITE_API_BASE: "http://api.example.com"
+# (tùy) cho phép build-time fallback, để dev local vẫn dùng import.meta.env.VITE_API_BASE
+# Nếu bạn không cần fallback này nữa thì có thể bỏ ARG/ENV dưới đây
 ARG VITE_API_BASE
 ENV VITE_API_BASE=$VITE_API_BASE
 
-# 4. Build ra thư mục dist (Vite sẽ embed import.meta.env.VITE_API_BASE)
+# build ra dist/
 RUN npm run build
 
 
-# Stage 2: chạy Nginx để serve static
+# ---------- Stage 2: runtime nginx ----------
 FROM nginx:alpine AS runtime
 WORKDIR /usr/share/nginx/html
 
-# Copy build output (static files) sang Nginx document root
+# copy output đã build
 COPY --from=build /app/dist . 
 
-# Dùng nginx default config
+# copy script entrypoint để generate env.js lúc container START
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+# expose cổng web
 EXPOSE 80
+
+# dùng entrypoint custom -> tạo env.js từ biến môi trường runtime rồi chạy nginx
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]

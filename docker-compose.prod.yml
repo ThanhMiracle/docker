@@ -25,7 +25,10 @@ services:
 
   # Frontend SPA (đang dùng image có sẵn của bạn)
   frontend:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.1
+    build : 
+      context: ./frontend
+      args:
+        VITE_API_BASE: "http://localhost:8000"
     container_name: frontend
     environment:
       - API_BASE=http://api:8000

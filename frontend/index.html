@@ -1,17 +1,18 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Simple Shop v3-fix</title>
+    <title>Simple Shop v3</title>
+
+    <!-- Runtime env (được generate khi container start) -->
+    <script src="/env.js"></script>
   </head>
   <body>
     <div id="root"></div>
 
-    <!-- ⚡ THÊM DÒNG NÀY để load env.js chứa window.__ENV__ -->
-    <script src="/env.js"></script>
-
-    <!-- Giữ nguyên script Vite -->
+    <!-- main bundle -->
     <script type="module" src="/src/main.jsx"></script>
+    <!-- nếu production đã build ra /assets/main-xxxx.js thì chỗ này sẽ do Vite thay -->
   </body>
 </html>

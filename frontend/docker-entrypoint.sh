@@ -1,14 +1,11 @@
 #!/bin/sh
-set -e
 
-HTML_DIR=/usr/share/nginx/html
+# tạo file env.js mỗi lần container start
+cat > /usr/share/nginx/html/env.js <<EOF
+window.__ENV__ = {
+  API_BASE: "${API_BASE}"
+};
+EOF
 
-# inject runtime env vào env.js
-if [ -n "$API_BASE" ]; then
-  sed -i "s|__API_BASE__|$API_BASE|g" "$HTML_DIR/env.js"
-#else
-  # fallback nếu không set từ docker-compose
-# sed -i "s|__API_BASE__|http://localhost:8000|g" "$HTML_DIR/env.js"
-fi
-
+# chạy nginx (CMD của Dockerfile sẽ được nối vào đây qua exec "$@")
 exec "$@"
