@@ -28,7 +28,7 @@ services:
     image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.1
     container_name: frontend
     environment:
-      - VITE_API_BASE=${VITE_API_BASE}
+      - API_BASE=${VITE_API_BASE}
     networks: [appnet]
     restart: unless-stopped
     depends_on:
