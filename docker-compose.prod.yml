@@ -28,10 +28,8 @@ services:
     build : 
       context: ./frontend
       args:
-        VITE_API_BASE: "http://localhost:8000"
+        VITE_API_BASE: ${API_BASE}
     container_name: frontend
-    environment:
-      - API_BASE=http://api:8000
     networks: [appnet]
     restart: unless-stopped
     depends_on:
