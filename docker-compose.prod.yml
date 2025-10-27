@@ -25,7 +25,7 @@ services:
 
   # Frontend SPA (đang dùng image có sẵn của bạn)
   frontend:
-    build: ./frontend
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.1
     container_name: frontend
     environment:
       - VITE_API_BASE=${VITE_API_BASE}
@@ -36,7 +36,7 @@ services:
 
   # Backend FastAPI
   api:
-    build: ./backend
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.3
     container_name: api
     environment:
       - DATABASE_URL=${DATABASE_URL}
