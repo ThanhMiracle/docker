@@ -1,7 +1,8 @@
 services:
   api:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.3
-    container_name: api
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.4
+    #build: ./backend
+    container_name: backend
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
       - JWT_SECRET=change-me-please
@@ -18,8 +19,8 @@ services:
       - appnet
 
   frontend:
-    #image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.2
-    build: ./frontend
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.2
+    #build: ./frontend
       
     container_name: frontend
     environment:
