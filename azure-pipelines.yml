@@ -1,0 +1,195 @@
+trigger:
+  branches:
+    include:
+      - main
+      - dev
+
+# Self-hosted agent pool của bạn
+pool:
+  name: 'Default'
+
+variables:
+  # ==== THAY GIÁ TRỊ NÀY THEO MÔI TRƯỜNG CỦA BẠN ====
+  DOCKERHUB_REPO: 'thanhmiracle'          # Docker Hub username
+  DOCKERHUB_SERVICE_CONNECTION: 'dockerhub-conn'   # tên Docker Registry service connection trỏ tới Docker Hub
+
+  AZURE_SERVICE_CONNECTION: 'azure-spn'   # tên Azure Resource Manager service connection
+  RESOURCE_GROUP: 'my-rg'                 # resource group chứa Container Apps
+
+  BACKEND_APP_NAME: 'docker-backend'      # Container App backend
+  FRONTEND_APP_NAME: 'docker-frontend'    # Container App frontend
+  NGINX_APP_NAME: 'docker-nginx'          # Container App nginx / reverse proxy
+  MINIO_APP_NAME: 'docker-minio'          # Container App MinIO
+
+#########################################
+# 1) TEST STAGE — pytest trong container
+#########################################
+stages:
+- stage: Test
+  #condition: eq(variables['Build.SourceBranch'], 'refs/heads/dev')
+  displayName: 'Run backend tests'
+  jobs:
+    - job: TestBackend
+      displayName: 'Backend pytest inside container'
+      steps:
+        - checkout: self
+
+        - script: |
+            echo "🔧 Starting containers with docker compose..."
+            docker compose up -d --build
+
+            echo "🧪 Running pytest inside api container..."
+            docker compose exec api pytest -q
+          displayName: "Run pytest in backend container"
+
+        - script: |
+            echo "🧹 Stopping containers..."
+            docker compose down
+          displayName: "Cleanup containers"
+
+
+#########################################
+# 2) BUILD STAGE — build frontend + 4 images
+#########################################
+- stage: Build
+  dependsOn: Test
+  displayName: "Build & Push Docker images"
+  condition: succeeded()   # chỉ chạy nếu Test stage pass
+
+  jobs:
+    - job: BuildJob
+      displayName: "Build frontend + docker images"
+      steps:
+        - checkout: self
+
+        #########################################
+        # (A) BUILD FRONTEND SOURCE (npm build)
+        #########################################
+        - task: NodeTool@0
+          displayName: "Install Node.js 18"
+          inputs:
+            versionSpec: '18.x'
+
+        - script: |
+            cd frontend
+            npm install
+            npm run build
+          displayName: "Build frontend"
+
+        #########################################
+        # (B) Build & Push BACKEND image
+        #########################################
+        - task: Docker@2
+          displayName: 'Build & Push backend'
+          inputs:
+            command: buildAndPush
+            containerRegistry: $(DOCKERHUB_SERVICE_CONNECTION)
+            repository: $(DOCKERHUB_REPO)/backend
+            dockerfile: backend/Dockerfile
+            buildContext: backend
+            tags: |
+              $(Build.SourceVersion)
+              latest
+
+        #########################################
+        # (C) Build & Push FRONTEND image
+        #########################################
+        - task: Docker@2
+          displayName: 'Build & Push frontend'
+          inputs:
+            command: buildAndPush
+            containerRegistry: $(DOCKERHUB_SERVICE_CONNECTION)
+            repository: $(DOCKERHUB_REPO)/frontend
+            dockerfile: frontend/Dockerfile
+            buildContext: frontend
+            tags: |
+              $(Build.SourceVersion)
+              latest
+
+        #########################################
+        # (D) Build & Push NGINX image
+        #########################################
+        - task: Docker@2
+          displayName: 'Build & Push nginx'
+          inputs:
+            command: buildAndPush
+            containerRegistry: $(DOCKERHUB_SERVICE_CONNECTION)
+            repository: $(DOCKERHUB_REPO)/nginx
+            dockerfile: nginx/Dockerfile
+            buildContext: nginx
+            tags: |
+              $(Build.SourceVersion)
+              latest
+
+      
+#########################################
+# 3) DEPLOY STAGE — chỉ chạy khi branch = main
+#########################################
+- stage: Deploy
+  dependsOn: Build
+  displayName: "Deploy to Azure Container Apps"
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+  jobs:
+    - job: DeployJob
+      displayName: "Deploy minio + backend + frontend + nginx"
+      steps:
+        #########################################
+        # 1) MinIO – deploy TRƯỚC
+        #########################################
+        - task: AzureCLI@2
+          displayName: "Deploy minio"
+          inputs:
+            azureSubscription: $(AZURE_SERVICE_CONNECTION)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              az containerapp update \
+                --name $(MINIO_APP_NAME) \
+                --resource-group $(RESOURCE_GROUP) \
+                --image docker.io/$(DOCKERHUB_REPO)/minio:$(Build.SourceVersion)
+
+        #########################################
+        # 2) Backend – deploy SAU minio
+        #########################################
+        - task: AzureCLI@2
+          displayName: "Deploy backend"
+          inputs:
+            azureSubscription: $(AZURE_SERVICE_CONNECTION)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              az containerapp update \
+                --name $(BACKEND_APP_NAME) \
+                --resource-group $(RESOURCE_GROUP) \
+                --image docker.io/$(DOCKERHUB_REPO)/backend:$(Build.SourceVersion)
+
+        #########################################
+        # 3) Frontend
+        #########################################
+        - task: AzureCLI@2
+          displayName: "Deploy frontend"
+          inputs:
+            azureSubscription: $(AZURE_SERVICE_CONNECTION)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              az containerapp update \
+                --name $(FRONTEND_APP_NAME) \
+                --resource-group $(RESOURCE_GROUP) \
+                --image docker.io/$(DOCKERHUB_REPO)/frontend:$(Build.SourceVersion)
+
+        #########################################
+        # 4) Nginx
+        #########################################
+        - task: AzureCLI@2
+          displayName: "Deploy nginx"
+          inputs:
+            azureSubscription: $(AZURE_SERVICE_CONNECTION)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              az containerapp update \
+                --name $(NGINX_APP_NAME) \
+                --resource-group $(RESOURCE_GROUP) \
+                --image docker.io/$(DOCKERHUB_REPO)/nginx:$(Build.SourceVersion)

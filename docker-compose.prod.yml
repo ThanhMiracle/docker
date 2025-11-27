@@ -36,7 +36,7 @@ services:
 
   # Backend FastAPI
   api:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.3
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.4
     container_name: api
     environment:
       - DATABASE_URL=${DATABASE_URL}

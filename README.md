@@ -80,9 +80,9 @@ docker exec proxy nginx -s reload || docker restart proxy
 
 ## Add .env file with this structure for product
 ### Postgres
-POSTGRES_USER=
-POSTGRES_PASSWORD=
-POSTGRES_DB=
+- POSTGRES_USER=
+- POSTGRES_PASSWORD=
+- POSTGRES_DB=
 
 ### API
 - DATABASE_URL=
