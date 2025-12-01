@@ -1,0 +1,143 @@
+trigger:
+  branches:
+    include:
+      - main
+      - dev
+
+pool:
+  name: 'Default'
+
+variables:
+  azureSubscription: 'azure-spn'
+  resourceGroupName: 'rg-simple-docker'
+  location: 'southeastasia'
+  appServicePlanName: 'asp-simple-docker-linux'
+  webAppName: 'simple-docker-frontend'   # tên App Service FE (unique)
+
+  nodeVersion: '18.x'
+  projectRoot: 'frontend'
+
+  # Đường dẫn backend cho FE – App Service backend phía trên
+  backendWebAppName: 'simple-docker-backend'
+
+stages:
+# ==================== BUILD FRONTEND ====================
+- stage: Build
+  displayName: 'Build frontend'
+  jobs:
+    - job: BuildFrontend
+      displayName: 'Build & package frontend'
+      steps:
+        - checkout: self
+
+        - task: NodeTool@0
+          displayName: 'Use Node.js $(nodeVersion)'
+          inputs:
+            versionSpec: '$(nodeVersion)'
+
+        - script: |
+            cd $(projectRoot)
+
+            # Thiết lập API base cho lúc build FE
+            BACKEND_URL="https://$(backendWebAppName).azurewebsites.net"
+            echo "VITE_API_BASE=$BACKEND_URL/api" > .env.production
+
+            npm install
+            npm run build
+          displayName: 'npm install & build frontend'
+
+        # Giả sử build ra thư mục dist, nếu là build/ thì đổi lại
+        - task: ArchiveFiles@2
+          displayName: 'Archive frontend dist'
+          inputs:
+            rootFolderOrFile: '$(projectRoot)/dist'
+            includeRootFolder: false
+            archiveType: 'zip'
+            archiveFile: '$(Build.ArtifactStagingDirectory)/frontend.zip'
+            replaceExistingArchive: true
+
+        - publish: '$(Build.ArtifactStagingDirectory)/frontend.zip'
+          artifact: frontend-drop
+          displayName: 'Publish frontend artifact'
+
+# ==================== DEPLOY FRONTEND ====================
+- stage: Deploy
+  displayName: 'Deploy frontend to App Service'
+  dependsOn: Build
+  condition: succeeded()
+
+  jobs:
+    - deployment: DeployFrontend
+      displayName: 'Deploy frontend'
+      environment: 'dev-frontend'
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: self
+
+              # Tạo RG + Plan + WebApp (Node) nếu chưa có
+              - task: AzureCLI@2
+                displayName: 'Ensure RG, Plan, Frontend Web App exist'
+                inputs:
+                  azureSubscription: $(azureSubscription)
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    set -e
+
+                    echo ">>> Create Resource Group (if not exists)..."
+                    az group create \
+                      --name $(resourceGroupName) \
+                      --location $(location)
+
+                    echo ">>> Create App Service Plan (Linux, if not exists)..."
+                    az appservice plan create \
+                      --name $(appServicePlanName) \
+                      --resource-group $(resourceGroupName) \
+                      --location $(location) \
+                      --sku B1 \
+                      --is-linux
+
+                    echo ">>> Create Frontend Web App (Node, if not exists)..."
+                    if ! az webapp show -g $(resourceGroupName) -n $(webAppName) >/dev/null 2>&1; then
+                      az webapp create \
+                        --resource-group $(resourceGroupName) \
+                        --plan $(appServicePlanName) \
+                        --name $(webAppName) \
+                        --runtime "NODE|18-lts"
+                    else
+                      echo "Web App $(webAppName) already exists, skip create."
+                    fi
+
+              - download: current
+                artifact: frontend-drop
+                displayName: 'Download frontend artifact'
+
+              # Deploy zip FE (dist) lên App Service
+              - task: AzureWebApp@1
+                displayName: 'Deploy frontend to Azure Web App'
+                inputs:
+                  azureSubscription: $(azureSubscription)
+                  appType: webAppLinux
+                  appName: $(webAppName)
+                  package: '$(Pipeline.Workspace)/frontend-drop/frontend.zip'
+
+              # Optionally: set env cho FE nếu cần
+              - task: AzureCLI@2
+                displayName: 'Configure frontend app settings (optional)'
+                inputs:
+                  azureSubscription: $(azureSubscription)
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    set -e
+
+                    BACKEND_URL="https://$(backendWebAppName).azurewebsites.net"
+                    az webapp config appsettings set \
+                      --resource-group $(resourceGroupName) \
+                      --name $(webAppName) \
+                      --settings \
+                        API_BASE_URL="$BACKEND_URL/api"
+
+                    echo "Frontend URL: https://$(webAppName).azurewebsites.net"

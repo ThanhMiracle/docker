@@ -1,0 +1,160 @@
+trigger:
+  branches:
+    include:
+      - main
+      - dev
+
+pool:
+  name: 'Default'    # self-hosted agent của bạn
+
+variables:
+  # ====== THÔNG TIN AZURE (CHỈNH LẠI CHO ĐÚNG) ======
+  azureSubscription: 'azure-spn'            # Service connection đến Azure
+  resourceGroupName: 'rg-simple-docker'     # RG cho app
+  location: 'southeastasia'
+  appServicePlanName: 'asp-simple-docker-linux'
+  webAppName: 'simple-docker-backend'       # tên App Service backend (phải unique)
+
+  # Python
+  pythonVersion: '3.11'
+  projectRoot: 'backend'
+
+  # MinIO – lấy từ MinIO Container Apps của bạn
+  MINIO_ENDPOINT: 'https://<minio-fqdn>.azurecontainerapps.io'
+  MINIO_BUCKET: 'uploads'
+  MINIO_SECURE: 'false'
+  MINIO_PUBLIC_URL: 'https://<public-domain-or-ip>/minio-public'
+
+  # Các biến nhạy cảm sẽ lấy từ variable secret của pipeline:
+  # - MINIO_ACCESS_KEY
+  # - MINIO_SECRET_KEY
+  # - DATABASE_URL
+  # - JWT_SECRET
+  # - JWT_EXPIRE_MINUTES
+
+stages:
+# ==================== BUILD BACKEND ====================
+- stage: Build
+  displayName: 'Build backend'
+  jobs:
+    - job: BuildBackend
+      displayName: 'Build & package backend'
+      steps:
+        - checkout: self
+
+        - task: UsePythonVersion@0
+          displayName: 'Use Python $(pythonVersion)'
+          inputs:
+            versionSpec: '$(pythonVersion)'
+
+        - script: |
+            python -m venv venv
+            source venv/bin/activate
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+          workingDirectory: $(projectRoot)
+          displayName: 'Install backend dependencies'
+
+        # Đóng zip thư mục backend/
+        - task: ArchiveFiles@2
+          displayName: 'Archive backend'
+          inputs:
+            rootFolderOrFile: '$(projectRoot)'
+            includeRootFolder: false
+            archiveType: 'zip'
+            archiveFile: '$(Build.ArtifactStagingDirectory)/backend.zip'
+            replaceExistingArchive: true
+
+        - publish: '$(Build.ArtifactStagingDirectory)/backend.zip'
+          artifact: backend-drop
+          displayName: 'Publish backend artifact'
+
+# ==================== DEPLOY BACKEND ====================
+- stage: Deploy
+  displayName: 'Deploy backend to App Service'
+  dependsOn: Build
+  condition: succeeded()
+
+  jobs:
+    - deployment: DeployBackend
+      displayName: 'Deploy backend'
+      environment: 'dev-backend'   # tuỳ bạn muốn đặt env name gì
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: self
+
+              # Tạo RG + App Service Plan + Web App nếu chưa có
+              - task: AzureCLI@2
+                displayName: 'Ensure RG, Plan, Web App exist'
+                inputs:
+                  azureSubscription: $(azureSubscription)
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    set -e
+
+                    echo ">>> Create Resource Group (if not exists)..."
+                    az group create \
+                      --name $(resourceGroupName) \
+                      --location $(location)
+
+                    echo ">>> Create App Service Plan (Linux, if not exists)..."
+                    az appservice plan create \
+                      --name $(appServicePlanName) \
+                      --resource-group $(resourceGroupName) \
+                      --location $(location) \
+                      --sku B1 \
+                      --is-linux
+
+                    echo ">>> Create Web App (Python, if not exists)..."
+                    if ! az webapp show -g $(resourceGroupName) -n $(webAppName) >/dev/null 2>&1; then
+                      az webapp create \
+                        --resource-group $(resourceGroupName) \
+                        --plan $(appServicePlanName) \
+                        --name $(webAppName) \
+                        --runtime "PYTHON|$(pythonVersion)"
+                    else
+                      echo "Web App $(webAppName) already exists, skip create."
+                    fi
+
+              - download: current
+                artifact: backend-drop
+                displayName: 'Download backend artifact'
+
+              # Deploy zip backend lên App Service (Linux)
+              - task: AzureWebApp@1
+                displayName: 'Deploy backend to Azure Web App'
+                inputs:
+                  azureSubscription: $(azureSubscription)
+                  appType: webAppLinux
+                  appName: $(webAppName)
+                  package: '$(Pipeline.Workspace)/backend-drop/backend.zip'
+
+              # Set appsettings (env vars) cho backend
+              - task: AzureCLI@2
+                displayName: 'Configure backend app settings'
+                inputs:
+                  azureSubscription: $(azureSubscription)
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    set -e
+                    echo ">>> Set app settings for backend..."
+
+                    az webapp config appsettings set \
+                      --resource-group $(resourceGroupName) \
+                      --name $(webAppName) \
+                      --settings \
+                        DATABASE_URL='$(DATABASE_URL)' \
+                        JWT_SECRET='$(JWT_SECRET)' \
+                        JWT_EXPIRE_MINUTES='$(JWT_EXPIRE_MINUTES)' \
+                        MINIO_ACCESS_KEY='$(MINIO_ACCESS_KEY)' \
+                        MINIO_SECRET_KEY='$(MINIO_SECRET_KEY)' \
+                        MINIO_ENDPOINT='$(MINIO_ENDPOINT)' \
+                        MINIO_BUCKET='$(MINIO_BUCKET)' \
+                        MINIO_SECURE='$(MINIO_SECURE)' \
+                        MINIO_PUBLIC_URL='$(MINIO_PUBLIC_URL)'
+
+                    echo "Backend URL: https://$(webAppName).azurewebsites.net"
