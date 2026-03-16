@@ -25,7 +25,7 @@ services:
 
   # Frontend SPA (đang dùng image có sẵn của bạn)
   frontend:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.2
+    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.3
     container_name: frontend
     environment:
       - API_BASE=${API_BASE}
