@@ -1,18 +1,19 @@
 services:
   api:
     image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.4
-    #build: ./backend
+    build: ./backend
     container_name: backend
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
       - JWT_SECRET=change-me-please
       - JWT_EXPIRE_MINUTES=120
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-      - MINIO_BUCKET=uploads
-      - MINIO_SECURE=false
-      - MINIO_PUBLIC_URL=http://localhost:9000
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET:-uploads}
+      - AWS_S3_PUBLIC_URL=${AWS_S3_PUBLIC_URL:-http://localhost:9000/uploads}
+      - AWS_S3_ENDPOINT_URL=http://minio:9000
+      - AWS_S3_AUTO_CREATE_BUCKET=true
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-minioadmin}
     ports: ["8000:8000"]
     depends_on: [db, minio]
     networks:
@@ -49,8 +50,8 @@ services:
     container_name: minio
     command: server /data --console-address ":9001"
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY:-minioadmin}
     volumes:
       - minio_data:/data
     ports:

@@ -7,6 +7,6 @@ passlib[argon2]
 python-jose[cryptography]
 pydantic
 email-validator
-minio
+boto3
 httpx
 pytest

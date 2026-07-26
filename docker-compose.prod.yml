@@ -2,10 +2,6 @@ networks:
   appnet:
     driver: bridge
 
-volumes:
-  pgdata:
-  minio_data:
-
 services:
   # Reverse proxy - cổng public duy nhất
   nginx:
@@ -14,7 +10,6 @@ services:
     depends_on:
       - frontend
       - api
-      - minio
     ports:
       - "80:80"        # Mở port 80 ra Internet
       # Nếu muốn HTTPS bằng reverse proxy khác/certbot thì thêm 443 ở đây
@@ -42,43 +37,13 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-      - MINIO_BUCKET=${MINIO_BUCKET}
-      - MINIO_SECURE=${MINIO_SECURE}
-      # Dùng path /minio-public qua Nginx để lộ file public
-      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL}
-    depends_on: [db, minio]
+      - AWS_REGION=${AWS_REGION}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
+      - AWS_S3_PUBLIC_URL=${AWS_S3_PUBLIC_URL:-}
+      - AWS_S3_ENDPOINT_URL=
+      - AWS_S3_AUTO_CREATE_BUCKET=false
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
     networks: [appnet]
     restart: unless-stopped
-
-  # PostgreSQL
-  db:
-    image: postgres:15-alpine
-    container_name: db
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks: [appnet]
-    restart: unless-stopped
-
-  # MinIO (object storage)
-  minio:
-    image: minio/minio:latest
-    container_name: minio
-    command: server /data --console-address ":9001"
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
-    volumes:
-      - minio_data:/data
-    networks: [appnet]
-    restart: unless-stopped
-    # Không mở port public trực tiếp; truy cập qua Nginx path /minio-public
-    # Nếu cần vào MinIO Console từ Internet, có thể thêm:
-    # ports:
-    #   - "9001:9001"

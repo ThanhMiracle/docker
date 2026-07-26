@@ -1,5 +1,5 @@
-# Simple Fullstack Docker — v3-fix (MinIO + esbuild fixed)
-Features: JWT auth, Products CRUD + ownership, My Products, real image uploads to MinIO, SPA frontend.
+# Simple Fullstack Docker — v3-fix (Amazon S3)
+Features: JWT auth, Products CRUD + ownership, My Products, real image uploads to Amazon S3, SPA frontend.
 
 ## Run
 
@@ -10,7 +10,7 @@ docker compose up --build
 Open:
 - Frontend: http://localhost:3000
 - Backend docs: http://localhost:8000/docs
-- MinIO Console: http://localhost:9001  (user/pass: minioadmin / minioadmin)
+- MinIO console (local testing): http://localhost:9001 (`minioadmin` / `minioadmin`)
 
 If you need to reset data:
 ```bash
@@ -40,14 +40,14 @@ This project is a simple fullstack web application demonstrating modern developm
 
 - **Backend:** FastAPI (Python) REST API with JWT authentication, user registration/login, and CRUD operations for products. Each product is owned by a user.
 - **Frontend:** Single Page Application (SPA) built with React and esbuild, providing a user-friendly interface for authentication and product management.
-- **Image Uploads:** Real image uploads are supported and stored in a local MinIO S3-compatible object storage.
-- **DevOps:** All services (frontend, backend, MinIO, database) are orchestrated with Docker Compose for easy local development and testing.
+- **Image Uploads:** Real image uploads are stored in Amazon S3.
+- **DevOps:** The frontend, backend, and database are orchestrated with Docker Compose.
 - **Testing:** Backend tests are written with pytest and can be run inside the API container.
 - **Infrastructure as Code:** Terraform scripts are included for provisioning cloud infrastructure if you want to deploy the stack outside local Docker.
 
 ### Main Technologies
 
-- **Backend:** FastAPI, SQLAlchemy, PostgreSQL, MinIO SDK
+- **Backend:** FastAPI, SQLAlchemy, PostgreSQL, boto3
 - **Frontend:** React, esbuild
 - **DevOps:** Docker, Docker Compose
 - **Testing:** pytest
@@ -57,7 +57,6 @@ This project is a simple fullstack web application demonstrating modern developm
 
 - `api/` — FastAPI backend source code
 - `frontend/` — React frontend source code
-- `minio/` — MinIO configuration (if any)
 - `terraform/` — Infrastructure as Code scripts for provisioning cloud resources (e.g., servers, databases, object storage) using Terraform. Useful for deploying the stack to AWS, GCP, or other providers.
 - `docker-compose.yml` — Service orchestration
 
@@ -79,24 +78,59 @@ docker exec proxy nginx -s reload || docker restart proxy
 
 
 ## Add .env file with this structure for product
-### Postgres
+### Local PostgreSQL (development only)
 - POSTGRES_USER=
 - POSTGRES_PASSWORD=
 - POSTGRES_DB=
 
-### API
-- DATABASE_URL=
+### Production API / RDS
+- DATABASE_URL=postgresql://db_user:db_password@your-rds-endpoint:5432/db_name
 - JWT_SECRET=
 - JWT_EXPIRE_MINUTES=
 
-### MinIO
-- MINIO_ACCESS_KEY=
-- MINIO_SECRET_KEY=
-- MINIO_ENDPOINT=http://minio:9000
-- MINIO_BUCKET=uploads
-- MINIO_SECURE=false
+### Amazon S3
+- AWS_REGION=ap-southeast-1
+- AWS_S3_BUCKET=your-upload-bucket
+- AWS_ACCESS_KEY_ID=
+- AWS_SECRET_ACCESS_KEY=
+- AWS_SESSION_TOKEN= (only for temporary credentials)
 
-### Expose public URLs
-- MINIO_PUBLIC_URL=http://{public_IP}/minio-public
+On EC2/ECS, prefer an IAM role and omit the three credential variables. The role
+needs `s3:PutObject` on `arn:aws:s3:::your-upload-bucket/*`.
+
+### Public image URLs
+- AWS_S3_PUBLIC_URL= (optional CloudFront/custom base URL)
+
+If `AWS_S3_PUBLIC_URL` is omitted, the API returns the standard regional S3 URL.
+The bucket/object must be publicly readable for browsers to display that URL.
+For a private bucket, put CloudFront in front of it and set `AWS_S3_PUBLIC_URL`
+to the distribution URL.
+
+### Local MinIO testing
+
+The default `docker-compose.yml` uses MinIO automatically while production
+continues to use AWS S3:
+
+```bash
+docker compose up --build
+```
+
+Local uploads use the `uploads` bucket and are available through
+`http://localhost:9000/uploads/<object-key>`. You do not need AWS credentials
+for local testing. `docker-compose.prod.yml` explicitly disables the custom S3
+endpoint and bucket auto-creation.
+
+### Production database (Amazon RDS)
+
+`docker-compose.prod.yml` does not run a PostgreSQL container. Set
+`DATABASE_URL` to the RDS PostgreSQL connection string:
+
+```env
+DATABASE_URL=postgresql://db_user:db_password@your-rds-endpoint:5432/db_name
+```
+
+The RDS security group must allow PostgreSQL traffic on port `5432` from the
+EC2 instance or ECS service running the API. Prefer referencing the
+application's security group instead of allowing public access.
 
 - VITE_API_BASE={public_IP}/api
