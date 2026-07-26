@@ -1,7 +1,9 @@
 services:
   api:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.4
-    build: ./backend
+    # image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.4
+    build:
+      context: ./backend
+      target: runtime
     container_name: backend
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
@@ -9,7 +11,7 @@ services:
       - JWT_EXPIRE_MINUTES=120
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - AWS_S3_BUCKET=${AWS_S3_BUCKET:-uploads}
-      - AWS_S3_PUBLIC_URL=${AWS_S3_PUBLIC_URL:-http://localhost:9000/uploads}
+      - AWS_S3_PUBLIC_URL=${AWS_S3_PUBLIC_URL:-http://localhost:9008/uploads}
       - AWS_S3_ENDPOINT_URL=http://minio:9000
       - AWS_S3_AUTO_CREATE_BUCKET=true
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-minioadmin}
@@ -55,7 +57,7 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "9000:9000"
+      - "9008:9000"
       - "9001:9001"
     networks:
       - appnet

@@ -116,7 +116,7 @@ docker compose up --build
 ```
 
 Local uploads use the `uploads` bucket and are available through
-`http://localhost:9000/uploads/<object-key>`. You do not need AWS credentials
+`http://localhost:9008/uploads/<object-key>`. You do not need AWS credentials
 for local testing. `docker-compose.prod.yml` explicitly disables the custom S3
 endpoint and bucket auto-creation.
 
