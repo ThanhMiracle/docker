@@ -79,3 +79,13 @@ USER appuser
 # ENV UVICORN_HOST=0.0.0.0 UVICORN_PORT=8000 UVICORN_WORKERS=1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+
+
+########################
+# Stage 2: test (CI only)
+########################
+FROM runtime AS test
+
+COPY --chown=appuser:appuser tests ./tests
+
+CMD ["pytest", "-q", "-p", "no:cacheprovider", "/app/tests"]
