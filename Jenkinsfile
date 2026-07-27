@@ -10,8 +10,8 @@ library(
 ec2AsgCiCd(
     // Image names used by docker-compose.prod.yml.
     dockerRegistry: 'docker.io',
-    frontendImage: 'thanh2909/simple-fullstack-docker-v3-ci-tests-frontend',
-    backendImage: 'thanh2909/simple-fullstack-docker-v3-ci-tests-api',
+    frontendImage: 'thanh2909/my-frontend',
+    backendImage: 'thanh2909/my-api',
     frontendContext: './frontend',
     backendContext: './backend',
     frontendService: 'frontend',
