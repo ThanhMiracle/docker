@@ -121,11 +121,4 @@ pipeline {
         }
     }
 
-    post {
-        always {
-            sh '''
-                docker image rm my-api-test:${BUILD_NUMBER} >/dev/null 2>&1 || true
-            '''
-        }
-    }
 }
