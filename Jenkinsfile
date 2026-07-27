@@ -8,7 +8,7 @@ library(
 )
 
 ec2AsgCiCd(
-    dockerCredentialsId: 'dockerhub-creds',
+    // Image names used by docker-compose.prod.yml.
     dockerRegistry: 'docker.io',
     frontendImage: 'thanh2909/simple-fullstack-docker-v3-ci-tests-frontend',
     backendImage: 'thanh2909/simple-fullstack-docker-v3-ci-tests-api',

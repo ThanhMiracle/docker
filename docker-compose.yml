@@ -1,9 +1,6 @@
 services:
   api:
-    # image: thanh2909/simple-fullstack-docker-v3-ci-tests-api:v0.4
-    build:
-      context: ./backend
-      target: runtime
+    image: thanh2909/my-api:v0.1
     container_name: backend
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
@@ -22,9 +19,7 @@ services:
       - appnet
 
   frontend:
-    image: thanh2909/simple-fullstack-docker-v3-ci-tests-frontend:v0.3
-    #build: ./frontend
-      
+    image: thanh2909/my-frontend:v0.1
     container_name: frontend
     environment:
       - API_BASE=http://localhost:8000
