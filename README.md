@@ -134,3 +134,69 @@ EC2 instance or ECS service running the API. Prefer referencing the
 application's security group instead of allowing public access.
 
 - VITE_API_BASE={public_IP}/api
+
+## Jenkins CI/CD
+
+The `Jenkinsfile` runs three CI/CD phases:
+
+1. **Test** — builds and runs the backend pytest image and compiles the frontend.
+2. **Build/Push** — builds both production images, tags them with the Jenkins
+   build number, and pushes them to Docker Hub.
+3. **Deploy** — on the `main` branch, sends an SSM Run Command to every managed
+   instance in the selected Auto Scaling Group. Each instance retrieves the
+   production environment and runs Docker Compose locally.
+
+The Jenkins agent does not deploy locally. It uses AWS Systems Manager Run
+Command to deploy to all SSM-managed instances carrying the target Auto Scaling
+Group tag. The Jenkins agent needs AWS CLI and `jq`.
+
+Create these Jenkins credentials:
+
+- `dockerhub-credentials`: **Username with password**, containing the Docker Hub
+  username and access token.
+
+Store the contents of `.env.example`, with real production values, as an SSM
+Parameter Store **SecureString**. The default parameter name is
+`/my-app/production/env`. Do not include `API_BASE`; deployment discovers and
+adds it automatically.
+
+Set the build parameters:
+
+- `ALB_NAME`: the Application Load Balancer name, not its ARN or DNS name.
+- `ALB_SCHEME`: `https` when the ALB has a public HTTPS listener, otherwise
+  `http`.
+- `AWS_DEPLOY_REGION`: the AWS region containing the ALB.
+- `ASG_NAME`: the Auto Scaling Group name. All its currently managed instances
+  are targeted through the `aws:autoscaling:groupName` tag.
+- `PROD_ENV_PARAMETER`: the SSM SecureString parameter containing `.env`.
+
+During deployment Jenkins resolves the current ALB DNS name with AWS CLI and
+writes this value into the temporary `.env`:
+
+```env
+API_BASE=https://resolved-alb-dns-name/api
+```
+
+The Jenkins role needs:
+
+- `elasticloadbalancing:DescribeLoadBalancers`
+- `ssm:SendCommand`
+- `ssm:DescribeInstanceInformation`
+- `ssm:ListCommands`
+- `ssm:ListCommandInvocations`
+
+Each ASG instance needs SSM Agent, AWS CLI, Docker, Compose v2, and an instance
+role with `ssm:GetParameter` for the environment parameter plus `kms:Decrypt`
+when a customer-managed KMS key protects it.
+
+For a manual deployment on the production host:
+
+```bash
+cp .env.example .env
+# Edit .env with real production values.
+chmod 600 .env
+docker compose --env-file .env -f docker-compose.prod.yml pull
+docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+The real `.env` is intentionally ignored by Git. Never commit it.
