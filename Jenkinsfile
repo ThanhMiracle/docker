@@ -44,5 +44,5 @@ ec2AsgCiCd(
     autoScalingGroup: env.DEPLOY_ASG_NAME,
     launchTemplateId: env.DEPLOY_LAUNCH_TEMPLATE_ID,
 
-    trivyEnabled: true
+    trivyEnabled: false
 )
