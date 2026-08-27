@@ -96,6 +96,23 @@ def migrate_order_cancellation_fields():
                 "ALTER TABLE orders ADD COLUMN cancelled_at TIMESTAMP WITH TIME ZONE"
             ))
 
+def migrate_product_variant_fields():
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    additions = {
+        "products": {"image_urls_json": "TEXT", "colors_json": "TEXT"},
+        "cart_items": {"selected_color": "VARCHAR(80)"},
+        "order_items": {"selected_color": "VARCHAR(80)"},
+    }
+    with engine.begin() as connection:
+        for table, columns in additions.items():
+            if table not in tables:
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table)}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+
 def migrate_user_verification_fields():
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():

@@ -1,3 +1,4 @@
+import json
 from sqlalchemy import Column, Integer, String, Float, Text, Boolean, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -22,15 +23,26 @@ class Product(Base):
     name = Column(String, nullable=False, index=True)
     price = Column(Float, nullable=False)
     image_url = Column(String, nullable=True)
+    image_urls_json = Column(Text, nullable=True)
+    colors_json = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     owner = relationship("User", back_populates="products")
+
+    @property
+    def images(self):
+        return json.loads(self.image_urls_json) if self.image_urls_json else ([self.image_url] if self.image_url else [])
+
+    @property
+    def colors(self):
+        return json.loads(self.colors_json) if self.colors_json else []
 
 class CartItem(Base):
     __tablename__ = "cart_items"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    selected_color = Column(String, nullable=True)
     quantity = Column(Integer, nullable=False, default=1)
     user = relationship("User", back_populates="cart_items")
     product = relationship("Product")
@@ -59,4 +71,5 @@ class OrderItem(Base):
     product_name = Column(String, nullable=False)
     unit_price = Column(Float, nullable=False)
     quantity = Column(Integer, nullable=False)
+    selected_color = Column(String, nullable=True)
     order = relationship("Order", back_populates="items")

@@ -22,10 +22,14 @@ class ProductBase(BaseModel):
     price: float
     image_url: Optional[str] = None
     description: Optional[str] = None
-class ProductCreate(ProductBase): pass
+class ProductCreate(ProductBase):
+    images: Optional[List[str]] = None
+    colors: Optional[List[str]] = None
 class ProductOut(ProductBase):
     id: int
     owner_id: int
+    images: List[str] = []
+    colors: List[str] = []
     model_config = ConfigDict(from_attributes=True) 
 class ProductsPage(BaseModel):
     items: List[ProductOut]
@@ -37,13 +41,16 @@ class ProductsPage(BaseModel):
 class CartItemCreate(BaseModel):
     product_id: int
     quantity: int = 1
+    selected_color: Optional[str] = None
 
 class CartItemUpdate(BaseModel):
     quantity: int
+    selected_color: Optional[str] = None
 
 class CartItemOut(BaseModel):
     product_id: int
     quantity: int
+    selected_color: Optional[str] = None
     product: ProductOut
     model_config = ConfigDict(from_attributes=True)
 
@@ -56,6 +63,7 @@ class OrderItemOut(BaseModel):
     product_name: str
     unit_price: float
     quantity: int
+    selected_color: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 class CheckoutCreate(BaseModel):

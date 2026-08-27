@@ -93,7 +93,7 @@ export default function Orders() {
                 </div>
               ) : <p style={{ marginBottom: 8 }}><strong>Delivery:</strong> {order.customer_name} · {order.phone}<br />{order.delivery_address}</p>}
               <ul style={{ margin: 0, paddingLeft: 20 }}>
-                {order.items.map(item => <li key={`${order.id}-${item.product_id}`}>{item.product_name} × {item.quantity} — ${(item.unit_price * item.quantity).toFixed(2)}</li>)}
+                {order.items.map(item => <li key={`${order.id}-${item.product_id}-${item.selected_color || ''}`}>{item.product_name}{item.selected_color ? ` (${item.selected_color})` : ''} × {item.quantity} — ${(item.unit_price * item.quantity).toFixed(2)}</li>)}
               </ul>
               {(order.status === 'pending_confirmation' || order.status === 'confirmed') && (
                 <div className="order-actions"><button className="text-button" onClick={() => startEditingDelivery(order)}>Edit delivery</button><button className="cancel-order" onClick={() => cancelOrder(order.id)}>Cancel order</button></div>

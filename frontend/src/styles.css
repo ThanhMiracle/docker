@@ -37,6 +37,19 @@ h2 { font-size: 1.25rem; }
 .product-card__name { font-size: 1.07rem; font-weight: 700; }
 .product-card__price { margin-top: .3rem; color: #126847; font-size: 1.1rem; font-weight: 700; }
 .product-card__description { min-height: 2.4em; margin-top: .55rem; color: #69776f; font-size: .84rem; line-height: 1.45; }
+.product-thumbnails { display: flex; align-items: center; gap: .4rem; margin-top: .7rem; }
+.product-thumbnails img { width: 35px !important; height: 35px !important; border: 1px solid #d9e2db; border-radius: 7px !important; object-fit: cover; }
+.product-thumbnails span { color: #5d786a; font-size: .75rem; font-weight: 700; }
+.colour-picker { display: grid; gap: .45rem; margin-top: .8rem; color: #52675b; font-size: .78rem; font-weight: 700; }
+.colour-options { display: flex; flex-wrap: wrap; gap: .45rem; }
+.colour-builder { display: grid; gap: .45rem; color: #466052; font-size: .82rem; font-weight: 700; }
+.colour-add-row { display: flex; gap: .55rem; }
+.colour-add-row button { white-space: nowrap; }
+.admin-colour-chip { display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .45rem .3rem .65rem; color: #15563c; background: #e1f1e6; border-radius: 999px; font-size: .76rem; }
+.admin-colour-chip button { padding: 0; width: 1.15rem; height: 1.15rem; color: #15563c; background: transparent; font-size: 1rem; line-height: 1; box-shadow: none; }
+.admin-colour-chip button:hover:not(:disabled) { color: #9f332e; background: transparent; box-shadow: none; transform: none; }
+.colour-option { padding: .38rem .65rem; color: #315343; background: #f5f7f3; border: 1px solid #cbd8ce; border-radius: 999px; font-size: .76rem; box-shadow: none; }
+.colour-option:hover:not(:disabled), .colour-option.selected { color: #fff; background: #176448; border-color: #176448; box-shadow: none; }
 .product-card__actions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
 .toolbar { display: flex; align-items: center; gap: .7rem; margin-bottom: 1.5rem; padding: .75rem; border: 1px solid #e0e4dd; border-radius: 14px; background: rgba(255,255,255,.65); }
 .toolbar input { flex: 1; }

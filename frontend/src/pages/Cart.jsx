@@ -49,10 +49,11 @@ export default function Cart() {
 
   useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const changeQuantity = async (productId, quantity) => {
+  const changeQuantity = async (productId, quantity, selectedColor) => {
     try {
-      if (quantity < 1) setCart(await request(`/cart/items/${productId}`, { method: 'DELETE' }))
-      else setCart(await request(`/cart/items/${productId}`, { method: 'PUT', body: JSON.stringify({ quantity }) }))
+      const color = selectedColor ? `?selected_color=${encodeURIComponent(selectedColor)}` : ''
+      if (quantity < 1) setCart(await request(`/cart/items/${productId}${color}`, { method: 'DELETE' }))
+      else setCart(await request(`/cart/items/${productId}`, { method: 'PUT', body: JSON.stringify({ quantity, selected_color: selectedColor || null }) }))
     } catch (error) { setMessage(error.message) }
   }
 
@@ -100,14 +101,15 @@ export default function Cart() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600 }}>{item.product.name}</div>
                   <div>${Number(item.product.price).toFixed(2)} each</div>
+                  {item.selected_color && <div>Colour: {item.selected_color}</div>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button onClick={() => changeQuantity(item.product_id, item.quantity - 1)}>−</button>
+                  <button onClick={() => changeQuantity(item.product_id, item.quantity - 1, item.selected_color)}>−</button>
                   <span>{item.quantity}</span>
-                  <button onClick={() => changeQuantity(item.product_id, item.quantity + 1)}>+</button>
+                  <button onClick={() => changeQuantity(item.product_id, item.quantity + 1, item.selected_color)}>+</button>
                 </div>
                 <strong>${(item.product.price * item.quantity).toFixed(2)}</strong>
-                <button onClick={() => changeQuantity(item.product_id, 0)}>Remove</button>
+                <button onClick={() => changeQuantity(item.product_id, 0, item.selected_color)}>Remove</button>
               </div>
             ))}
           </div>

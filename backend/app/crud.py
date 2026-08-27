@@ -1,4 +1,5 @@
 from typing import Optional
+import json
 from datetime import datetime, timedelta, timezone
 import secrets
 from sqlalchemy.orm import Session
@@ -78,14 +79,31 @@ def verify_user_email(db: Session, token: str):
     db.refresh(user)
 
     return user, None
+def _set_product_variants(product, data):
+    images = data.pop("images", None)
+    colors = data.pop("colors", None)
+    if images is not None:
+        product.image_urls_json = json.dumps(images)
+        product.image_url = images[0] if images else None
+    if colors is not None:
+        product.colors_json = json.dumps(colors)
+
 def create_product(db: Session, data: dict, owner_id: int):
-    p = models.Product(owner_id=owner_id, **data); db.add(p); db.commit(); db.refresh(p); return p
+    data = data.copy()
+    images = data.pop("images", None)
+    colors = data.pop("colors", None)
+    p = models.Product(owner_id=owner_id, **data)
+    data["images"] = images
+    data["colors"] = colors
+    _set_product_variants(p, data)
+    db.add(p); db.commit(); db.refresh(p); return p
 def get_product(db: Session, pid: int):
     return db.query(models.Product).filter(models.Product.id == pid).first()
 def update_product(db: Session, pid: int, data: dict, requester_id: int, admin: bool):
     p = get_product(db, pid)
     if not p: return None, "not_found"
     if (p.owner_id != requester_id) and (not admin): return None, "forbidden"
+    _set_product_variants(p, data)
     for k, v in data.items(): setattr(p, k, v)
     db.commit(); db.refresh(p); return p, None
 def delete_product(db: Session, pid: int, requester_id: int, admin: bool):
@@ -110,21 +128,23 @@ def list_my_products(db: Session, owner_id: int, skip: int=0, limit: int=12, q: 
 def get_cart_items(db: Session, user_id: int):
     return db.query(models.CartItem).filter(models.CartItem.user_id == user_id).all()
 
-def add_cart_item(db: Session, user_id: int, product_id: int, quantity: int):
+def add_cart_item(db: Session, user_id: int, product_id: int, quantity: int, selected_color: str | None = None):
     item = db.query(models.CartItem).filter(
-        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id
+        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id,
+        models.CartItem.selected_color == selected_color
     ).first()
     if item:
         item.quantity += quantity
     else:
-        item = models.CartItem(user_id=user_id, product_id=product_id, quantity=quantity)
+        item = models.CartItem(user_id=user_id, product_id=product_id, quantity=quantity, selected_color=selected_color)
         db.add(item)
     db.commit(); db.refresh(item)
     return item
 
-def update_cart_item(db: Session, user_id: int, product_id: int, quantity: int):
+def update_cart_item(db: Session, user_id: int, product_id: int, quantity: int, selected_color: str | None = None):
     item = db.query(models.CartItem).filter(
-        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id
+        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id,
+        models.CartItem.selected_color == selected_color
     ).first()
     if not item:
         return None
@@ -132,9 +152,10 @@ def update_cart_item(db: Session, user_id: int, product_id: int, quantity: int):
     db.commit(); db.refresh(item)
     return item
 
-def remove_cart_item(db: Session, user_id: int, product_id: int):
+def remove_cart_item(db: Session, user_id: int, product_id: int, selected_color: str | None = None):
     item = db.query(models.CartItem).filter(
-        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id
+        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id,
+        models.CartItem.selected_color == selected_color
     ).first()
     if not item:
         return False
@@ -155,7 +176,7 @@ def checkout_cart(db: Session, user_id: int, checkout: dict):
     for item in cart_items:
         db.add(models.OrderItem(
             order_id=order.id, product_id=item.product.id, product_name=item.product.name,
-            unit_price=item.product.price, quantity=item.quantity
+            unit_price=item.product.price, quantity=item.quantity, selected_color=item.selected_color
         ))
     db.commit(); db.refresh(order)
     return order

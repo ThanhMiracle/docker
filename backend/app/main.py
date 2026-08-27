@@ -22,6 +22,7 @@ models.Base.metadata.create_all(bind=database.engine)
 database.migrate_order_delivery_fields()
 database.migrate_order_confirmation_fields()
 database.migrate_order_cancellation_fields()
+database.migrate_product_variant_fields()
 database.migrate_user_verification_fields()
 database.configure_single_admin(os.getenv("ADMIN_EMAIL"))
 
@@ -394,6 +395,7 @@ def add_to_cart(
         user.id,
         item.product_id,
         item.quantity,
+        item.selected_color,
     )
 
     return cart_response(
@@ -423,6 +425,7 @@ def update_cart_item(
         user.id,
         product_id,
         item.quantity,
+        item.selected_color,
     )
 
     if not updated:
@@ -443,6 +446,7 @@ def update_cart_item(
 )
 def remove_cart_item(
     product_id: int,
+    selected_color: str | None = None,
     db: Session = Depends(database.get_db),
     user=Depends(get_current_user),
 ):
@@ -450,6 +454,7 @@ def remove_cart_item(
         db,
         user.id,
         product_id,
+        selected_color,
     )
 
     if not removed:
