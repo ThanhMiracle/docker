@@ -1,3 +1,4 @@
+import json
 import os
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -138,6 +139,35 @@ def migrate_chat_message_fields():
         for name, definition in required_columns.items():
             if name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE chat_messages ADD COLUMN {name} {definition}"))
+
+
+def migrate_legacy_minio_urls():
+    """Correct product image URLs created with the obsolete http://w hostname."""
+    public_url = os.getenv("MINIO_PUBLIC_URL", "").rstrip("/")
+    legacy_url = "http://w:9008/uploads"
+    if not public_url or public_url == legacy_url:
+        return
+
+    from . import models
+
+    db = SessionLocal()
+    try:
+        changed = False
+        for product in db.query(models.Product).filter(
+            models.Product.image_url.like(f"{legacy_url}/%")
+        ).all():
+            product.image_url = product.image_url.replace(legacy_url, public_url, 1)
+            if product.image_urls_json:
+                images = json.loads(product.image_urls_json)
+                product.image_urls_json = json.dumps([
+                    image.replace(legacy_url, public_url, 1) if image.startswith(legacy_url) else image
+                    for image in images
+                ])
+            changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
 
 def migrate_user_verification_fields():
     inspector = inspect(engine)

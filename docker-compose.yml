@@ -19,7 +19,8 @@ services:
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - STORAGE_BACKEND=minio
       - MINIO_BUCKET=${MINIO_BUCKET:-uploads}
-      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL:-http://w:9008/uploads}
+      # Browser-facing URL. Nginx proxies this path to the local MinIO service.
+      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL:-http://localhost/uploads}
       - MINIO_ENDPOINT_URL=http://minio:9000
       - MINIO_AUTO_CREATE_BUCKET=true
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}

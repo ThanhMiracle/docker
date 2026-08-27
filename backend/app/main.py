@@ -55,6 +55,7 @@ database.migrate_product_inventory_fields()
 database.migrate_user_verification_fields()
 database.migrate_user_profile_fields()
 database.migrate_chat_message_fields()
+database.migrate_legacy_minio_urls()
 database.configure_single_admin(os.getenv("ADMIN_EMAIL"))
 
 
