@@ -11,6 +11,7 @@ import Orders from './pages/Orders'
 import ConfirmOrder from './pages/ConfirmOrder'
 import VerifyEmail from './pages/VerifyEmail'
 import './styles.css'
+import { apiUrl } from './api'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -41,9 +42,7 @@ function getApiBase() {
 
 // Chuẩn hoá để có protocol
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 function Nav() {
   const nav = useNavigate()

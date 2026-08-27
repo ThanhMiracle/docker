@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { apiUrl } from '../api'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -29,9 +30,7 @@ function getApiBase() {
 
 
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function Login() {
   const [email, setEmail] = useState('')

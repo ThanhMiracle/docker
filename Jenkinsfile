@@ -4,6 +4,7 @@ pipeline {
     options {
         disableConcurrentBuilds()
         timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
     parameters {
@@ -51,9 +52,22 @@ pipeline {
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
+        IMAGE_TAG = "v${BUILD_NUMBER}"
     }
 
     stages {
+        stage('Verify tools') {
+            steps {
+                sh '''
+                    set -eu
+                    command -v docker
+                    command -v aws
+                    command -v jq
+                    docker compose version
+                '''
+            }
+        }
+
         stage('Test') {
             steps {
                 sh '''
@@ -68,8 +82,10 @@ pipeline {
                       -e DATABASE_URL=sqlite:////tmp/test.db \
                       -e JWT_SECRET=ci-only-secret \
                       -e JWT_EXPIRE_MINUTES=120 \
-                      -e AWS_REGION=ap-southeast-1 \
-                      -e AWS_S3_BUCKET=ci-test-bucket \
+                      -e STORAGE_BACKEND=minio \
+                      -e MINIO_BUCKET=ci-test-bucket \
+                      -e MINIO_PUBLIC_URL=http://minio.invalid/uploads \
+                      -e MINIO_ENDPOINT_URL=http://minio.invalid \
                       my-api-test:${BUILD_NUMBER}
 
                     # There is no frontend unit-test script yet. A production
@@ -79,23 +95,23 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build release images') {
             steps {
                 sh '''
                     set -eu
                     docker build \
-                      --tag ${FRONTEND_IMAGE}:${BUILD_NUMBER} \
+                      --tag ${FRONTEND_IMAGE}:${IMAGE_TAG} \
                       --tag ${FRONTEND_IMAGE}:latest \
                       ./frontend
                     docker build \
-                      --tag ${API_IMAGE}:${BUILD_NUMBER} \
+                      --tag ${API_IMAGE}:${IMAGE_TAG} \
                       --tag ${API_IMAGE}:latest \
                       ./backend
                 '''
             }
         }
 
-        stage('Push') {
+        stage('Push release images') {
             when {
                 branch 'main'
             }
@@ -115,8 +131,8 @@ pipeline {
                             --password-stdin
                         set -x
 
-                        docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
-                        docker push ${API_IMAGE}:${BUILD_NUMBER}
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${API_IMAGE}:${IMAGE_TAG}
                         docker push ${FRONTEND_IMAGE}:latest
                         docker push ${API_IMAGE}:latest
                         docker logout "$DOCKER_REGISTRY"
@@ -125,7 +141,7 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy production') {
             when {
                 branch 'main'
             }
@@ -138,9 +154,15 @@ pipeline {
                       "$ALB_SCHEME" \
                       "$AWS_DEPLOY_REGION" \
                       "$PROD_ENV_PARAMETER" \
-                      "$BUILD_NUMBER"
+                      "$IMAGE_TAG"
                 '''
             }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker logout "$DOCKER_REGISTRY" || true; docker image prune -f || true'
         }
     }
 

@@ -53,6 +53,7 @@ echo "Deploying to $MANAGED_INSTANCE_COUNT SSM-managed ASG instance(s)"
 COMPOSE_BASE64="$(base64 -w 0 docker-compose.prod.yml)"
 NGINX_BASE64="$(base64 -w 0 nginx/nginx.conf)"
 API_BASE="${ALB_SCHEME}://${ALB_DNS_NAME}/api"
+FRONTEND_BASE_URL="${ALB_SCHEME}://${ALB_DNS_NAME}"
 
 COMMAND_PARAMETERS="$(
   jq -n \
@@ -61,6 +62,7 @@ COMMAND_PARAMETERS="$(
     --arg region "$AWS_DEPLOY_REGION" \
     --arg env_parameter "$PROD_ENV_PARAMETER" \
     --arg api_base "$API_BASE" \
+    --arg frontend_base_url "$FRONTEND_BASE_URL" \
     --arg image_tag "$IMAGE_TAG" \
     '{
       commands: [
@@ -71,7 +73,9 @@ COMMAND_PARAMETERS="$(
         ("aws ssm get-parameter --name " + ($env_parameter | @sh) + " --with-decryption --region " + ($region | @sh) + " --query Parameter.Value --output text > /opt/my-app/.env"),
         "chmod 600 /opt/my-app/.env",
         "sed -i '\''/^API_BASE=/d'\'' /opt/my-app/.env",
+        "sed -i '\''/^FRONTEND_BASE_URL=/d'\'' /opt/my-app/.env",
         ("printf '\''API_BASE=%s\\\\n'\'' " + ($api_base | @sh) + " >> /opt/my-app/.env"),
+        ("printf '\''FRONTEND_BASE_URL=%s\\\\n'\'' " + ($frontend_base_url | @sh) + " >> /opt/my-app/.env"),
         "cd /opt/my-app",
         ("export IMAGE_TAG=" + ($image_tag | @sh)),
         "docker compose --env-file .env -f docker-compose.prod.yml config --quiet",

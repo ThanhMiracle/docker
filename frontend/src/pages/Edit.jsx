@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { apiUrl } from '../api'
 
 // Lấy API_BASE runtime (docker) > build-time (vite) > fallback
 function getApiBase() {
@@ -30,9 +31,7 @@ function getApiBase() {
 
 // Chuẩn hoá để đảm bảo có protocol
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function Edit() {
   const { id } = useParams()

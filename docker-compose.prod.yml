@@ -16,6 +16,13 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks: [appnet]
 
   # Frontend SPA (đang dùng image có sẵn của bạn)
@@ -26,8 +33,10 @@ services:
       - API_BASE=${API_BASE}
     networks: [appnet]
     restart: unless-stopped
+    init: true
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
   # Backend FastAPI
   api:
@@ -37,9 +46,24 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - STORAGE_BACKEND=azure
       - AZURE_STORAGE_CONNECTION_STRING=${AZURE_STORAGE_CONNECTION_STRING}
       - AZURE_STORAGE_CONTAINER=${AZURE_STORAGE_CONTAINER}
       - AZURE_BLOB_PUBLIC_URL=${AZURE_BLOB_PUBLIC_URL:-}
     networks: [appnet]
     restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

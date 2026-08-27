@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { apiUrl } from '../api'
 
 // Hàm lấy API base URL theo ưu tiên:
 // 1. window.__ENV__.API_BASE (runtime trong container, do docker-entrypoint.sh inject)
@@ -32,9 +33,7 @@ function getApiBase() {
 
 // Ghép URL chuẩn có http://
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function Create() {
   const [name, setName] = useState('')
