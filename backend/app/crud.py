@@ -268,3 +268,57 @@ def delete_expired_cancelled_orders(db: Session, user_id: int):
     for order in expired_orders:
         db.delete(order)
     db.commit()
+
+
+def list_chat_messages(db: Session, user):
+    query = db.query(models.ChatMessage)
+    if not user.is_admin:
+        query = query.filter(models.ChatMessage.customer_id == user.id)
+    return query.order_by(models.ChatMessage.created_at.asc()).all()
+
+
+def create_chat_message(db: Session, sender, body: str, customer_id: int | None = None):
+    # Customers always message their own support conversation. An admin may
+    # reply only to an existing customer's conversation.
+    target_customer_id = customer_id if sender.is_admin else sender.id
+    if sender.is_admin and not target_customer_id:
+        return None, "customer_required"
+    if sender.is_admin:
+        customer = db.query(models.User).filter(
+            models.User.id == target_customer_id,
+            models.User.is_admin.is_(False),
+        ).first()
+        if not customer:
+            return None, "customer_not_found"
+
+    message = models.ChatMessage(
+        sender_id=sender.id,
+        customer_id=target_customer_id,
+        body=body.strip(),
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    return message, None
+
+
+def list_chat_conversations(db: Session):
+    """Return one inbox row per customer, ordered by latest activity."""
+    latest_by_customer = {}
+    for message in db.query(models.ChatMessage).order_by(
+        models.ChatMessage.created_at.desc()
+    ).all():
+        if message.customer_id not in latest_by_customer:
+            latest_by_customer[message.customer_id] = message
+
+    conversations = []
+    for customer_id, message in latest_by_customer.items():
+        customer = db.query(models.User).filter(models.User.id == customer_id).first()
+        if customer:
+            conversations.append({
+                "customer_id": customer.id,
+                "customer_email": customer.email,
+                "last_message": message.body,
+                "last_message_at": message.created_at,
+            })
+    return conversations

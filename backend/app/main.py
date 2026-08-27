@@ -610,3 +610,39 @@ def my_orders(
         .order_by(models.Order.id.desc())
         .all()
     )
+
+
+# =========================
+# CUSTOMER SUPPORT CHAT
+# =========================
+
+@app.get("/chat/messages", response_model=list[schemas.ChatMessageOut])
+def get_chat_messages(
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_user),
+):
+    return crud.list_chat_messages(db, user)
+
+
+@app.get("/chat/conversations", response_model=list[schemas.ChatConversationOut])
+def get_chat_conversations(
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_admin),
+):
+    return crud.list_chat_conversations(db)
+
+
+@app.post("/chat/messages", response_model=schemas.ChatMessageOut)
+def send_chat_message(
+    data: schemas.ChatMessageCreate,
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_user),
+):
+    message, error = crud.create_chat_message(
+        db, user, data.body, data.customer_id
+    )
+    if error == "customer_required":
+        raise HTTPException(status_code=400, detail="Choose a customer to reply to")
+    if error == "customer_not_found":
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return message

@@ -22,8 +22,8 @@ services:
       - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL:-http://localhost:9008/uploads}
       - MINIO_ENDPOINT_URL=http://minio:9000
       - MINIO_AUTO_CREATE_BUCKET=true
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
     ports: ["8000:8000"]
     depends_on: [db, minio]
     networks:
@@ -49,7 +49,7 @@ services:
     container_name: proxy
     depends_on: [frontend, api]
     ports:
-      - "8080:80"
+      - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:

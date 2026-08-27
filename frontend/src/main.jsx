@@ -10,6 +10,8 @@ import Cart from './pages/Cart'
 import Orders from './pages/Orders'
 import ConfirmOrder from './pages/ConfirmOrder'
 import VerifyEmail from './pages/VerifyEmail'
+import Chat from './pages/Chat'
+import ChatWidget from './components/ChatWidget'
 import './styles.css'
 import { apiUrl } from './api'
 
@@ -69,6 +71,7 @@ function Nav() {
       {localStorage.getItem('is_admin') === 'true' && <Link to="/create">Add Product</Link>}
       <Link to="/cart">Cart</Link>
       <Link to="/orders">My Orders</Link>
+      {isSignedIn && <Link to="/chat">Support</Link>}
       <div className="nav-actions">
         {isSignedIn ? (
           <button onClick={logout}>Logout</button>
@@ -87,6 +90,7 @@ createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <Nav />
+      <ChatWidget />
       <Routes>
         <Route path="/" element={<Products />} />
         <Route path="/create" element={<Create />} />
@@ -97,6 +101,7 @@ createRoot(document.getElementById('root')).render(
         <Route path="/orders" element={<Orders />} />
         <Route path="/confirm-order" element={<ConfirmOrder />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
+        <Route path="/chat" element={<Chat />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

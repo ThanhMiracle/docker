@@ -16,6 +16,8 @@ STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "azure").lower()
 MINIO_BUCKET = os.getenv("MINIO_BUCKET")
 MINIO_PUBLIC_URL = os.getenv("MINIO_PUBLIC_URL")
 MINIO_ENDPOINT_URL = os.getenv("MINIO_ENDPOINT_URL")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
 MINIO_AUTO_CREATE_BUCKET = os.getenv("MINIO_AUTO_CREATE_BUCKET", "").lower() in {
     "1", "true", "yes"
 }
@@ -63,6 +65,8 @@ def _minio_client():
         "s3",
         region_name="us-east-1",
         endpoint_url=MINIO_ENDPOINT_URL,
+        aws_access_key_id=MINIO_ACCESS_KEY,
+        aws_secret_access_key=MINIO_SECRET_KEY,
         config=Config(s3={"addressing_style": "path"}),
     )
 

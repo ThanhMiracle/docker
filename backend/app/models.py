@@ -73,3 +73,12 @@ class OrderItem(Base):
     quantity = Column(Integer, nullable=False)
     selected_color = Column(String, nullable=True)
     order = relationship("Order", back_populates="items")
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    customer_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sender = relationship("User", foreign_keys=[sender_id])

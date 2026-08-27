@@ -88,3 +88,21 @@ class OrderOut(BaseModel):
     created_at: datetime
     items: List[OrderItemOut]
     model_config = ConfigDict(from_attributes=True)
+
+class ChatMessageCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+    customer_id: Optional[int] = None
+
+class ChatMessageOut(BaseModel):
+    id: int
+    sender_id: int
+    customer_id: int
+    body: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class ChatConversationOut(BaseModel):
+    customer_id: int
+    customer_email: EmailStr
+    last_message: str
+    last_message_at: datetime
