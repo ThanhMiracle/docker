@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -35,6 +36,7 @@ const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const nav = useNavigate()
 
   const login = async () => {
     const form = new URLSearchParams({ username: email, password })
@@ -46,7 +48,9 @@ export default function Login() {
     if (r.ok) {
       const data = await r.json()
       localStorage.setItem('token', data.access_token)
+      localStorage.setItem('is_admin', String(data.is_admin))
       alert('Logged in!')
+      nav('/')
     } else {
       alert(await r.text())
     }

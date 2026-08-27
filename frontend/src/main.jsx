@@ -2,11 +2,14 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-dom'
 import Products from './pages/Products'
-import MyProducts from './pages/MyProducts'
 import Create from './pages/Create'
 import Edit from './pages/Edit'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import Cart from './pages/Cart'
+import Orders from './pages/Orders'
+import ConfirmOrder from './pages/ConfirmOrder'
+import VerifyEmail from './pages/VerifyEmail'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -53,6 +56,7 @@ function Nav() {
       })
     }
     localStorage.removeItem('token')
+    localStorage.removeItem('is_admin')
     nav('/login')
   }
 
@@ -67,8 +71,9 @@ function Nav() {
       }}
     >
       <Link to="/">Products</Link>
-      <Link to="/my">My Products</Link>
-      <Link to="/create">Add Product</Link>
+      {localStorage.getItem('is_admin') === 'true' && <Link to="/create">Add Product</Link>}
+      <Link to="/cart">Cart</Link>
+      <Link to="/orders">My Orders</Link>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 12 }}>
         <Link to="/login">Login</Link>
         <Link to="/register">Register</Link>
@@ -84,11 +89,14 @@ createRoot(document.getElementById('root')).render(
       <Nav />
       <Routes>
         <Route path="/" element={<Products />} />
-        <Route path="/my" element={<MyProducts />} />
         <Route path="/create" element={<Create />} />
         <Route path="/edit/:id" element={<Edit />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/cart" element={<Cart />} />
+        <Route path="/orders" element={<Orders />} />
+        <Route path="/confirm-order" element={<ConfirmOrder />} />
+        <Route path="/verify-email" element={<VerifyEmail />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

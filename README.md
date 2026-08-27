@@ -140,9 +140,9 @@ application's security group instead of allowing public access.
 The `Jenkinsfile` runs three CI/CD phases:
 
 1. **Test** — builds and runs the backend pytest image and compiles the frontend.
-2. **Build/Push** — builds both production images, tags them with the Jenkins
-   build number, and pushes them to Docker Hub.
-3. **Deploy** — on the `main` branch, sends an SSM Run Command to every managed
+2. **Build/Push** — builds both production images and tags them with the Jenkins
+   build number. Docker Hub push runs only on the `main` branch.
+3. **Deploy** — only on the `main` branch, sends an SSM Run Command to every managed
    instance in the selected Auto Scaling Group. Each instance retrieves the
    production environment and runs Docker Compose locally.
 
@@ -169,6 +169,8 @@ Set the build parameters:
 - `ASG_NAME`: the Auto Scaling Group name. All its currently managed instances
   are targeted through the `aws:autoscaling:groupName` tag.
 - `PROD_ENV_PARAMETER`: the SSM SecureString parameter containing `.env`.
+- `DOCKERHUB_CREDENTIAL_ID`: Jenkins credential ID containing the Docker Hub
+  username and access token. The default is `dockerhub-credentials`.
 
 During deployment Jenkins resolves the current ALB DNS name with AWS CLI and
 writes this value into the temporary `.env`:

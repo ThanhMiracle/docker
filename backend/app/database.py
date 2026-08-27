@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -9,3 +9,93 @@ def get_db():
     db = SessionLocal()
     try: yield db
     finally: db.close()
+
+def migrate_order_delivery_fields():
+    """Add checkout fields for databases created before delivery details existed."""
+    inspector = inspect(engine)
+    if "orders" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("orders")}
+    required_columns = {
+        "customer_name": "VARCHAR(120) NOT NULL DEFAULT ''",
+        "phone": "VARCHAR(40) NOT NULL DEFAULT ''",
+        "delivery_address": "TEXT NOT NULL DEFAULT ''",
+    }
+    with engine.begin() as connection:
+        for name, definition in required_columns.items():
+            if name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
+
+def configure_single_admin(email: str | None):
+    """Make the configured account the only admin and automatically verify it."""
+
+    if not email:
+        return
+
+    db = SessionLocal()
+
+    try:
+        from .models import User
+
+        normalized_email = email.strip().lower()
+
+        admin = (
+            db.query(User)
+            .filter(User.email == normalized_email)
+            .first()
+        )
+
+        if not admin:
+            return
+
+        # Remove admin role from all other users
+        db.query(User).filter(
+            User.id != admin.id,
+            User.is_admin.is_(True)
+        ).update(
+            {"is_admin": False},
+            synchronize_session=False
+        )
+
+        # ADMIN_EMAIL is automatically verified
+        admin.is_admin = True
+        admin.email_verified = True
+        admin.email_verification_token = None
+        admin.email_verification_expires_at = None
+
+        db.commit()
+
+    finally:
+        db.close()
+
+def migrate_order_confirmation_fields():
+    inspector = inspect(engine)
+    if "orders" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("orders")}
+    required_columns = {
+        "status": "VARCHAR(30) NOT NULL DEFAULT 'confirmed'",
+        "confirmation_token": "VARCHAR(255)",
+        "confirmation_expires_at": "TIMESTAMP WITH TIME ZONE",
+    }
+    with engine.begin() as connection:
+        for name, definition in required_columns.items():
+            if name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
+
+def migrate_user_verification_fields():
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    # Existing accounts predate verification, so preserve their ability to sign in.
+    required_columns = {
+        "email_verified": "BOOLEAN NOT NULL DEFAULT true",
+        "email_verification_token": "VARCHAR(255)",
+        "email_verification_expires_at": "TIMESTAMP WITH TIME ZONE",
+    }
+    with engine.begin() as connection:
+        for name, definition in required_columns.items():
+            if name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))

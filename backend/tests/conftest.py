@@ -1,5 +1,6 @@
 # backend/tests/conftest.py
 import sys
+import os
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,6 +9,7 @@ import pytest
 
 # đảm bảo import được app
 sys.path.append("/app")  # phòng khi PYTHONPATH chưa set
+os.environ.setdefault("ADMIN_EMAIL", "alice@example.com")
 
 from app.main import app
 from app.database import Base, get_db

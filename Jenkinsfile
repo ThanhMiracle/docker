@@ -32,13 +32,25 @@ pipeline {
             defaultValue: '/my-app/production/env',
             description: 'SSM SecureString parameter containing the production .env'
         )
+        string(
+            name: 'DOCKERHUB_CREDENTIAL_ID',
+            defaultValue: 'dockerhub-credentials',
+            description: 'Jenkins username/password credential ID for Docker Hub'
+        )
+        string(
+            name: 'FRONTEND_IMAGE',
+            defaultValue: 'thanh2909/my-frontend',
+            description: 'Docker image repository for the frontend'
+        )
+        string(
+            name: 'API_IMAGE',
+            defaultValue: 'thanh2909/my-api',
+            description: 'Docker image repository for the API'
+        )
     }
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
-        FRONTEND_IMAGE = 'thanh2909/my-frontend'
-        API_IMAGE = 'thanh2909/my-api'
-        DOCKERHUB = credentials('dockerhub-credentials')
     }
 
     stages {
@@ -84,21 +96,32 @@ pipeline {
         }
 
         stage('Push') {
+            when {
+                branch 'main'
+            }
             steps {
-                sh '''
-                    set +x
-                    printf '%s' "$DOCKERHUB_PSW" |
-                      docker login "$DOCKER_REGISTRY" \
-                        --username "$DOCKERHUB_USR" \
-                        --password-stdin
-                    set -x
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: "${params.DOCKERHUB_CREDENTIAL_ID}",
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+                        printf '%s' "$DOCKERHUB_TOKEN" |
+                          docker login "$DOCKER_REGISTRY" \
+                            --username "$DOCKERHUB_USERNAME" \
+                            --password-stdin
+                        set -x
 
-                    docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
-                    docker push ${API_IMAGE}:${BUILD_NUMBER}
-                    docker push ${FRONTEND_IMAGE}:latest
-                    docker push ${API_IMAGE}:latest
-                    docker logout "$DOCKER_REGISTRY"
-                '''
+                        docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
+                        docker push ${API_IMAGE}:${BUILD_NUMBER}
+                        docker push ${FRONTEND_IMAGE}:latest
+                        docker push ${API_IMAGE}:latest
+                        docker logout "$DOCKER_REGISTRY"
+                    '''
+                }
             }
         }
 

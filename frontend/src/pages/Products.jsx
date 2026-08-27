@@ -40,6 +40,22 @@ export default function Products() {
   const [skip, setSkip] = useState(0)
   const [limit, setLimit] = useState(12)
   const [total, setTotal] = useState(0)
+  const [message, setMessage] = useState('')
+
+  const addToCart = async (productId) => {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      setMessage('Please log in to add products to your cart.')
+      return
+    }
+    const res = await fetch(`${API}/cart/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ product_id: productId, quantity: 1 })
+    })
+    if (res.ok) setMessage('Added to cart.')
+    else setMessage((await res.json().catch(() => null))?.detail || 'Could not add product to cart.')
+  }
 
   const load = async () => {
     const qs = new URLSearchParams({ q, skip, limit })
@@ -61,6 +77,7 @@ export default function Products() {
   return (
     <div style={{ maxWidth: 1000, margin: '40px auto', fontFamily: 'system-ui' }}>
       <h1>Products</h1>
+      {message && <div style={{ marginBottom: 12, padding: 10, background: '#f3f8ff', borderRadius: 6 }}>{message}</div>}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <input
@@ -125,7 +142,8 @@ export default function Products() {
               </div>
             )}
 
-            <div style={{ marginTop: 8 }}>
+            <div style={{ marginTop: 8, display: 'flex', gap: 12 }}>
+              <button onClick={() => addToCart(p.id)}>Add to cart</button>
               <Link to={`/edit/${p.id}`}>Edit</Link>
             </div>
           </div>

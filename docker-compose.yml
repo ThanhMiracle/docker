@@ -1,11 +1,22 @@
 services:
   api:
-    image: thanh2909/my-api:v0.1
+    # image: thanh2909/my-api:v0.1
+    build:
+      context: ./backend
+      target: runtime
     container_name: backend
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
       - JWT_SECRET=change-me-please
       - JWT_EXPIRE_MINUTES=120
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:3000}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - AWS_S3_BUCKET=${AWS_S3_BUCKET:-uploads}
       - AWS_S3_PUBLIC_URL=${AWS_S3_PUBLIC_URL:-http://localhost:9008/uploads}
@@ -19,7 +30,8 @@ services:
       - appnet
 
   frontend:
-    image: thanh2909/my-frontend:v0.1
+    # image: thanh2909/my-frontend:v0.1
+    build: ./frontend
     container_name: frontend
     environment:
       - API_BASE=http://localhost:8000
