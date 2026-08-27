@@ -78,6 +78,12 @@ h2 { font-size: 1.25rem; }
 .messenger-window form input { min-width: 0; }
 .messenger-window form button { padding: .55rem .75rem; font-size: .78rem; }
 .messenger-error { display: block; padding: 0 .8rem .5rem; color: #a33430; }
+.chat-image { display: block; max-width: min(100%, 260px); max-height: 260px; margin-top: .45rem; border-radius: 10px; object-fit: cover; }
+.attach-button { display: grid; flex: 0 0 auto; width: 38px; place-items: center; cursor: pointer; color: #176448; border: 1px solid #b9d5c6; border-radius: 8px; }
+.attach-button input { display: none; }
+.attachment-name { align-self: center; max-width: 120px; overflow: hidden; color: #5c7162; text-overflow: ellipsis; white-space: nowrap; }
+.support-link { position: relative; }
+.nav-unread-badge, .unread-badge { display: inline-grid; min-width: 1.15rem; height: 1.15rem; place-items: center; margin-left: .35rem; padding: 0 .22rem; color: #fff; background: #c8433d; border-radius: 999px; font-size: .65rem; line-height: 1; }
 .messenger-launcher { width: 55px; height: 55px; padding: 0; border-radius: 50%; font-size: 1.35rem; box-shadow: 0 10px 28px rgba(12, 75, 51, .3); }
 .inbox-page { max-width: 1120px; margin: 0 auto; padding: 3rem 24px; }
 .inbox { display: grid; grid-template-columns: 310px 1fr; min-height: 650px; overflow: hidden; border: 1px solid #d8e2d9; border-radius: 18px; background: #fff; box-shadow: 0 18px 45px rgba(22,55,38,.1); }
@@ -97,6 +103,9 @@ h2 { font-size: 1.25rem; }
 .auth-footer { margin: 1.25rem 0 0; color: #68746c; font-size: .92rem; text-align: center; }
 .order-status { width: fit-content; margin-top: .4rem; padding: .2rem .5rem; color: #8a610d; background: #fff2c9; border-radius: 999px; font-size: .7rem; font-weight: 700; text-transform: capitalize; }
 .order-status--confirmed { color: #15563c; background: #dff4e7; }
+.order-status--preparing { color: #725111; background: #fff0bc; }
+.order-status--shipping { color: #174e76; background: #dceefb; }
+.order-status--delivered { color: #245a36; background: #d9f2df; }
 .order-status--cancelled { color: #8b3935; background: #fae4e2; }
 .cancel-order { margin-top: 1rem; color: #a63430; background: transparent; border: 1px solid #e5bbb8; }
 .cancel-order:hover:not(:disabled) { color: #fff; background: #b3413c; }

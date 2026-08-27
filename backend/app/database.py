@@ -124,6 +124,21 @@ def migrate_product_inventory_fields():
                 "ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0"
             ))
 
+def migrate_chat_message_fields():
+    """Add attachment and read-state fields to existing support chats."""
+    inspector = inspect(engine)
+    if "chat_messages" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("chat_messages")}
+    required_columns = {
+        "attachment_url": "VARCHAR(2048)",
+        "read_at": "TIMESTAMP WITH TIME ZONE",
+    }
+    with engine.begin() as connection:
+        for name, definition in required_columns.items():
+            if name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE chat_messages ADD COLUMN {name} {definition}"))
+
 def migrate_user_verification_fields():
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():
@@ -150,3 +165,12 @@ def migrate_user_profile_fields():
             connection.execute(text(
                 "ALTER TABLE users ADD COLUMN name VARCHAR(120) NOT NULL DEFAULT ''"
             ))
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    profile_columns = {
+        "phone": "VARCHAR(40)",
+        "delivery_address": "TEXT",
+    }
+    with engine.begin() as connection:
+        for name, definition in profile_columns.items():
+            if name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))

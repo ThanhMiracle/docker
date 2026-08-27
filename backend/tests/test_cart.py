@@ -9,13 +9,13 @@ def login_or_register(client, email, password):
     )
     return response.json()["access_token"]
 
-def test_cart_and_checkout(client, monkeypatch):
+def test_cart_and_checkout(client, monkeypatch, login_user):
     sent_tokens = []
     monkeypatch.setattr("app.email_service.send_order_confirmation", lambda _email, _order_id, token: sent_tokens.append(token))
-    token = login_or_register(client, "shopper@example.com", "secret123")
-    admin_token = login_or_register(client, "alice@example.com", "secret123")
+    token = login_user("shopper@example.com", "secret123", "Shopper")
+    admin_token = login_user("alice@example.com", "secret123", "Admin")
     product = client.post(
-        "/products/", json={"name": "Cart test product", "price": 12.5}, headers=auth_header(admin_token)
+        "/products/", json={"name": "Cart test product", "price": 12.5, "stock": 10}, headers=auth_header(admin_token)
     ).json()
 
     response = client.post("/cart/items", json={"product_id": product["id"], "quantity": 2}, headers=auth_header(token))

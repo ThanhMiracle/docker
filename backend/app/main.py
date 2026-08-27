@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ import time
 import uuid
 
 from . import database, models, crud, schemas, security, storage, email_service, rate_limit
+from .chat_realtime import chat_connections
 from .observability import configure_logging
 from .deps import get_current_user, get_current_admin
 
@@ -53,12 +54,27 @@ database.migrate_product_variant_fields()
 database.migrate_product_inventory_fields()
 database.migrate_user_verification_fields()
 database.migrate_user_profile_fields()
+database.migrate_chat_message_fields()
 database.configure_single_admin(os.getenv("ADMIN_EMAIL"))
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/profile", response_model=schemas.UserProfileOut)
+def get_profile(user=Depends(get_current_user)):
+    return user
+
+
+@app.put("/profile", response_model=schemas.UserProfileOut)
+def update_profile(
+    data: schemas.UserProfileUpdate,
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_user),
+):
+    return crud.update_user_profile(db, user, data.model_dump())
 
 
 # =========================
@@ -229,6 +245,20 @@ async def upload_file(
     )
 
     return {"url": url}
+
+
+@app.post("/chat/files/upload")
+async def upload_chat_image(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+):
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image attachments are allowed")
+    data = await file.read()
+    if not data or len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be between 1 byte and 5 MB")
+    ext = os.path.splitext(file.filename or "")[1]
+    return {"url": storage.put_file(data, file.content_type, ext=ext)}
 
 
 # =========================
@@ -662,6 +692,32 @@ def my_orders(
     )
 
 
+@app.get("/orders", response_model=list[schemas.OrderOut])
+def all_orders(
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_admin),
+):
+    return db.query(models.Order).order_by(models.Order.id.desc()).all()
+
+
+@app.put("/orders/{order_id}/status", response_model=schemas.OrderOut)
+def update_order_status(
+    order_id: int,
+    data: schemas.OrderStatusUpdate,
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_admin),
+):
+    order, error = crud.update_order_status(db, order_id, data.status)
+    if error == "not_found":
+        raise HTTPException(status_code=404, detail="Order not found")
+    if error == "invalid_transition":
+        raise HTTPException(
+            status_code=400,
+            detail="Orders must move through confirmed, preparing, shipping, and delivered in order",
+        )
+    return order
+
+
 # =========================
 # CUSTOMER SUPPORT CHAT
 # =========================
@@ -682,17 +738,76 @@ def get_chat_conversations(
     return crud.list_chat_conversations(db)
 
 
+@app.get("/chat/unread", response_model=schemas.ChatUnreadOut)
+def get_chat_unread_count(
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_user),
+):
+    return {"unread_count": crud.chat_unread_count(db, user)}
+
+
+@app.post("/chat/read")
+def mark_chat_read(
+    customer_id: int | None = None,
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_user),
+):
+    error = crud.mark_chat_read(db, user, customer_id)
+    if error == "customer_required":
+        raise HTTPException(status_code=400, detail="Choose a customer conversation")
+    return {"ok": True}
+
+
 @app.post("/chat/messages", response_model=schemas.ChatMessageOut)
-def send_chat_message(
+async def send_chat_message(
     data: schemas.ChatMessageCreate,
     db: Session = Depends(database.get_db),
     user=Depends(get_current_user),
 ):
+    if not data.body.strip() and not data.attachment_url:
+        raise HTTPException(status_code=400, detail="Write a message or attach an image")
     message, error = crud.create_chat_message(
-        db, user, data.body, data.customer_id
+        db, user, data.body, data.customer_id, data.attachment_url
     )
     if error == "customer_required":
         raise HTTPException(status_code=400, detail="Choose a customer to reply to")
     if error == "customer_not_found":
         raise HTTPException(status_code=404, detail="Customer not found")
+    recipients = [message.customer_id]
+    if not user.is_admin:
+        recipients.extend(admin.id for admin in db.query(models.User).filter(
+            models.User.is_admin.is_(True)
+        ).all())
+    await chat_connections.notify(recipients, {
+        "type": "chat_message",
+        "message": schemas.ChatMessageOut.model_validate(message).model_dump(mode="json"),
+    })
     return message
+
+
+@app.websocket("/chat/ws")
+async def chat_websocket(websocket: WebSocket, token: str):
+    """Send real-time chat events to the authenticated browser session."""
+    try:
+        payload = security.decode_token(token)
+        email = payload.get("sub")
+        if not email:
+            raise ValueError("Missing subject")
+        db = database.SessionLocal()
+        user = db.query(models.User).filter(models.User.email == email).first()
+        if not user:
+            raise ValueError("User not found")
+        user_id = user.id
+    except Exception:
+        await websocket.close(code=1008)
+        return
+    finally:
+        if "db" in locals():
+            db.close()
+
+    await chat_connections.connect(user_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        chat_connections.disconnect(user_id, websocket)

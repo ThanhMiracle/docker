@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Literal, Optional, List
 from datetime import datetime
 from pydantic import ConfigDict
 class UserCreate(BaseModel):
@@ -13,6 +13,17 @@ class UserOut(BaseModel):
     is_admin: bool
     email_verified: bool
     model_config = ConfigDict(from_attributes=True) 
+
+class UserProfileOut(BaseModel):
+    name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    delivery_address: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class UserProfileUpdate(BaseModel):
+    phone: str = Field(min_length=3, max_length=40)
+    delivery_address: str = Field(min_length=5, max_length=500)
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -78,6 +89,9 @@ class OrderDeliveryUpdate(BaseModel):
     phone: str = Field(min_length=3, max_length=40)
     delivery_address: str = Field(min_length=5, max_length=500)
 
+class OrderStatusUpdate(BaseModel):
+    status: Literal["preparing", "shipping", "delivered"]
+
 class ConfirmOrder(BaseModel):
     token: str = Field(min_length=20)
 
@@ -93,14 +107,17 @@ class OrderOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class ChatMessageCreate(BaseModel):
-    body: str = Field(min_length=1, max_length=2000)
+    body: str = Field(default="", max_length=2000)
     customer_id: Optional[int] = None
+    attachment_url: Optional[str] = Field(default=None, max_length=2048)
 
 class ChatMessageOut(BaseModel):
     id: int
     sender_id: int
     customer_id: int
     body: str
+    attachment_url: Optional[str] = None
+    read_at: Optional[datetime] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
@@ -109,3 +126,7 @@ class ChatConversationOut(BaseModel):
     customer_email: EmailStr
     last_message: str
     last_message_at: datetime
+    unread_count: int = 0
+
+class ChatUnreadOut(BaseModel):
+    unread_count: int

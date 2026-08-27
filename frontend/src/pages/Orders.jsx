@@ -17,6 +17,7 @@ export default function Orders() {
   const [editingOrder, setEditingOrder] = useState(null)
   const [delivery, setDelivery] = useState({ phone: '', delivery_address: '' })
   const nav = useNavigate()
+  const isAdmin = localStorage.getItem('is_admin') === 'true'
 
   const cancelOrder = async orderId => {
     if (!window.confirm(`Cancel order #${orderId}?`)) return
@@ -64,7 +65,7 @@ export default function Orders() {
       nav('/login')
       return
     }
-    fetch(`${API}/orders/mine`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API}${isAdmin ? '/orders' : '/orders/mine'}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(async response => {
         if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || 'Could not load orders')
         return response.json()
@@ -73,9 +74,31 @@ export default function Orders() {
       .catch(error => setMessage(error.message))
   }, [nav])
 
+  const nextOrderStatus = {
+    confirmed: { status: 'preparing', label: 'Start preparing' },
+    preparing: { status: 'shipping', label: 'Mark as shipping' },
+    shipping: { status: 'delivered', label: 'Mark delivered' }
+  }
+
+  const advanceOrderStatus = async (orderId, next) => {
+    if (!window.confirm(`${next.label} for order #${orderId}?`)) return
+    const token = localStorage.getItem('token')
+    try {
+      const response = await fetch(`${API}/orders/${orderId}/status`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: next.status })
+      })
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || 'Could not update the order status')
+      const updated = await response.json()
+      setOrders(current => current.map(order => order.id === updated.id ? updated : order))
+      setMessage(`Order #${orderId} is now ${updated.status}.`)
+    } catch (error) { setMessage(error.message) }
+  }
+
   return (
     <div style={{ maxWidth: 900, margin: '40px auto', fontFamily: 'system-ui' }}>
-      <h1>My Orders</h1>
+      <h1>{isAdmin ? 'Order Management' : 'My Orders'}</h1>
       {message && <div style={{ marginBottom: 16, padding: 10, background: '#fff3f3', borderRadius: 6 }}>{message}</div>}
       {orders.length === 0 ? <p>No orders yet. <Link to="/">Start shopping</Link></p> : (
         <div style={{ display: 'grid', gap: 16 }}>
@@ -96,9 +119,10 @@ export default function Orders() {
               <ul style={{ margin: 0, paddingLeft: 20 }}>
                 {order.items.map(item => <li key={`${order.id}-${item.product_id}-${item.selected_color || ''}`}>{item.product_name}{item.selected_color ? ` (${item.selected_color})` : ''} × {item.quantity} — ${(item.unit_price * item.quantity).toFixed(2)}</li>)}
               </ul>
-              {(order.status === 'pending_confirmation' || order.status === 'confirmed') && (
+              {!isAdmin && (order.status === 'pending_confirmation' || order.status === 'confirmed') && (
                 <div className="order-actions"><button className="text-button" onClick={() => startEditingDelivery(order)}>Edit delivery</button><button className="cancel-order" onClick={() => cancelOrder(order.id)}>Cancel order</button></div>
               )}
+              {isAdmin && nextOrderStatus[order.status] && <div className="order-actions"><button onClick={() => advanceOrderStatus(order.id, nextOrderStatus[order.status])}>{nextOrderStatus[order.status].label}</button></div>}
             </article>
           ))}
         </div>

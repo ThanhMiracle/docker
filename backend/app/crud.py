@@ -49,6 +49,13 @@ def get_user_by_email(db: Session, email: str):
         .first()
     )
 
+def update_user_profile(db: Session, user, data: dict):
+    user.phone = data["phone"].strip()
+    user.delivery_address = data["delivery_address"].strip()
+    db.commit()
+    db.refresh(user)
+    return user
+
 def verify_user_email(db: Session, token: str):
     user = (
         db.query(models.User)
@@ -300,6 +307,25 @@ def update_order_delivery(db: Session, order_id: int, user_id: int, data: dict):
     return order, None
 
 
+def update_order_status(db: Session, order_id: int, next_status: str):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        return None, "not_found"
+
+    allowed_transitions = {
+        "confirmed": "preparing",
+        "preparing": "shipping",
+        "shipping": "delivered",
+    }
+    if allowed_transitions.get(order.status) != next_status:
+        return None, "invalid_transition"
+
+    order.status = next_status
+    db.commit()
+    db.refresh(order)
+    return order, None
+
+
 def delete_expired_cancelled_orders(db: Session, user_id: int):
     """Permanently remove a user's cancelled orders after five minutes."""
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
@@ -326,7 +352,10 @@ def list_chat_messages(db: Session, user):
     return query.order_by(models.ChatMessage.created_at.asc()).all()
 
 
-def create_chat_message(db: Session, sender, body: str, customer_id: int | None = None):
+def create_chat_message(
+    db: Session, sender, body: str, customer_id: int | None = None,
+    attachment_url: str | None = None,
+):
     # Customers always message their own support conversation. An admin may
     # reply only to an existing customer's conversation.
     target_customer_id = customer_id if sender.is_admin else sender.id
@@ -344,6 +373,7 @@ def create_chat_message(db: Session, sender, body: str, customer_id: int | None 
         sender_id=sender.id,
         customer_id=target_customer_id,
         body=body.strip(),
+        attachment_url=attachment_url,
     )
     db.add(message)
     db.commit()
@@ -364,10 +394,39 @@ def list_chat_conversations(db: Session):
     for customer_id, message in latest_by_customer.items():
         customer = db.query(models.User).filter(models.User.id == customer_id).first()
         if customer:
+            unread_count = db.query(models.ChatMessage).filter(
+                models.ChatMessage.customer_id == customer.id,
+                models.ChatMessage.sender_id == customer.id,
+                models.ChatMessage.read_at.is_(None),
+            ).count()
             conversations.append({
                 "customer_id": customer.id,
                 "customer_email": customer.email,
                 "last_message": message.body,
                 "last_message_at": message.created_at,
+                "unread_count": unread_count,
             })
     return conversations
+
+
+def mark_chat_read(db: Session, user, customer_id: int | None = None):
+    target_customer_id = customer_id if user.is_admin else user.id
+    if user.is_admin and not target_customer_id:
+        return "customer_required"
+    db.query(models.ChatMessage).filter(
+        models.ChatMessage.customer_id == target_customer_id,
+        models.ChatMessage.sender_id != user.id,
+        models.ChatMessage.read_at.is_(None),
+    ).update({"read_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    db.commit()
+    return None
+
+
+def chat_unread_count(db: Session, user):
+    query = db.query(models.ChatMessage).filter(
+        models.ChatMessage.sender_id != user.id,
+        models.ChatMessage.read_at.is_(None),
+    )
+    if not user.is_admin:
+        query = query.filter(models.ChatMessage.customer_id == user.id)
+    return query.count()

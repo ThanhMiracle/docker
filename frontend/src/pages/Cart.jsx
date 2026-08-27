@@ -41,6 +41,13 @@ export default function Cart() {
     }
     try {
       setCart(await request('/cart'))
+      const profile = await request('/profile')
+      setCheckoutDetails(current => ({
+        ...current,
+        customer_name: current.customer_name || profile.name || '',
+        phone: current.phone || profile.phone || '',
+        delivery_address: current.delivery_address || profile.delivery_address || ''
+      }))
     } catch (error) {
       setMessage(error.message)
     } finally {
