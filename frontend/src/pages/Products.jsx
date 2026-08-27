@@ -34,6 +34,18 @@ const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
   ? API_BASE
   : `http://${API_BASE}`
 
+function getSignedInEmail() {
+  const storedEmail = localStorage.getItem('user_email')
+  if (storedEmail) return storedEmail
+
+  try {
+    const payload = localStorage.getItem('token')?.split('.')[1]
+    return payload ? JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))).sub : ''
+  } catch {
+    return ''
+  }
+}
+
 export default function Products() {
   const [items, setItems] = useState([])
   const [q, setQ] = useState('')
@@ -41,6 +53,8 @@ export default function Products() {
   const [limit, setLimit] = useState(12)
   const [total, setTotal] = useState(0)
   const [message, setMessage] = useState('')
+  const signedInEmail = getSignedInEmail()
+  const isAdmin = localStorage.getItem('is_admin') === 'true'
 
   const addToCart = async (productId) => {
     const token = localStorage.getItem('token')
@@ -75,11 +89,11 @@ export default function Products() {
   }, [q, skip, limit])
 
   return (
-    <div style={{ maxWidth: 1000, margin: '40px auto', fontFamily: 'system-ui' }}>
-      <h1>Products</h1>
-      {message && <div style={{ marginBottom: 12, padding: 10, background: '#f3f8ff', borderRadius: 6 }}>{message}</div>}
+    <main className="page">
+      <div className="page-header"><div><p className="eyebrow">Thoughtfully selected</p><h1>Find something lovely.</h1></div><div className="account-summary">{signedInEmail ? <>Shopping as <strong>{signedInEmail}</strong></> : 'Sign in to save your cart and orders.'}</div></div>
+      {message && <div className="notice">{message}</div>}
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div className="toolbar">
         <input
           placeholder="Search..."
           value={q}
@@ -99,26 +113,14 @@ export default function Products() {
           <option value={12}>12</option>
           <option value={24}>24</option>
         </select>
-        <div style={{ marginLeft: 'auto' }}>
-          Total: {total}
-        </div>
+        <div className="total-label">{total} products</div>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px,1fr))',
-          gap: 16
-        }}
-      >
+      <div className="product-grid">
         {items.map(p => (
           <div
             key={p.id}
-            style={{
-              border: '1px solid #eee',
-              borderRadius: 8,
-              padding: 12
-            }}
+            className="product-card"
           >
             {p.image_url && (
               <img
@@ -133,18 +135,20 @@ export default function Products() {
               />
             )}
 
-            <div style={{ fontWeight: 600, marginTop: 8 }}>{p.name}</div>
-            <div>${Number(p.price).toFixed(2)}</div>
+            <div className="product-card__body">
+            <div className="product-card__name">{p.name}</div>
+            <div className="product-card__price">${Number(p.price).toFixed(2)}</div>
 
             {p.description && (
-              <div style={{ fontSize: 12, opacity: 0.8 }}>
+              <div className="product-card__description">
                 {p.description}
               </div>
             )}
 
-            <div style={{ marginTop: 8, display: 'flex', gap: 12 }}>
+            <div className="product-card__actions">
               <button onClick={() => addToCart(p.id)}>Add to cart</button>
-              <Link to={`/edit/${p.id}`}>Edit</Link>
+              {isAdmin && <Link to={`/edit/${p.id}`}>Edit</Link>}
+            </div>
             </div>
           </div>
         ))}
@@ -164,6 +168,6 @@ export default function Products() {
           Next
         </button>
       </div>
-    </div>
+    </main>
   )
 }

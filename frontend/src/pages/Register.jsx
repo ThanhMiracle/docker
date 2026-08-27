@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -51,9 +52,12 @@ export default function Register() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: '60px auto', fontFamily: 'system-ui' }}>
-      <h1>Register</h1>
-      <div style={{ display: 'grid', gap: 12 }}>
+    <main className="auth-page">
+      <section className="auth-card">
+      <p className="eyebrow">Start shopping</p>
+      <h1>Create your account.</h1>
+      <p>Save your cart and keep track of every order in one place.</p>
+      <div className="form-stack">
         <input
           placeholder="Email"
           value={email}
@@ -65,8 +69,10 @@ export default function Register() {
           value={password}
           onChange={e => setPassword(e.target.value)}
         />
-        <button onClick={register}>Register</button>
+        <button onClick={register}>Create account</button>
       </div>
-    </div>
+      <p className="auth-footer">Already registered? <Link to="/login">Sign in</Link></p>
+      </section>
+    </main>
   )
 }

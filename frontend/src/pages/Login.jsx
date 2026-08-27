@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -49,6 +49,7 @@ export default function Login() {
       const data = await r.json()
       localStorage.setItem('token', data.access_token)
       localStorage.setItem('is_admin', String(data.is_admin))
+      localStorage.setItem('user_email', email.trim().toLowerCase())
       alert('Logged in!')
       nav('/')
     } else {
@@ -57,9 +58,12 @@ export default function Login() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: '60px auto', fontFamily: 'system-ui' }}>
-      <h1>Login</h1>
-      <div style={{ display: 'grid', gap: 12 }}>
+    <main className="auth-page">
+      <section className="auth-card">
+      <p className="eyebrow">Welcome back</p>
+      <h1>Good to see you.</h1>
+      <p>Sign in to continue shopping and manage your orders.</p>
+      <div className="form-stack">
         <input
           placeholder="Email"
           value={email}
@@ -71,8 +75,10 @@ export default function Login() {
           value={password}
           onChange={e => setPassword(e.target.value)}
         />
-        <button onClick={login}>Login</button>
+        <button onClick={login}>Sign in</button>
       </div>
-    </div>
+      <p className="auth-footer">New here? <Link to="/register">Create an account</Link></p>
+      </section>
+    </main>
   )
 }

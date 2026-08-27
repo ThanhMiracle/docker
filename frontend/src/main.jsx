@@ -10,6 +10,7 @@ import Cart from './pages/Cart'
 import Orders from './pages/Orders'
 import ConfirmOrder from './pages/ConfirmOrder'
 import VerifyEmail from './pages/VerifyEmail'
+import './styles.css'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -57,29 +58,23 @@ function Nav() {
     }
     localStorage.removeItem('token')
     localStorage.removeItem('is_admin')
+    localStorage.removeItem('user_email')
     nav('/login')
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: 16,
-        padding: 12,
-        borderBottom: '1px solid #eee',
-        fontFamily: 'system-ui, sans-serif'
-      }}
-    >
-      <Link to="/">Products</Link>
+    <nav className="site-nav">
+      <Link className="brand" to="/">Moss & Market</Link>
+      <Link to="/">Shop</Link>
       {localStorage.getItem('is_admin') === 'true' && <Link to="/create">Add Product</Link>}
       <Link to="/cart">Cart</Link>
       <Link to="/orders">My Orders</Link>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: 12 }}>
+      <div className="nav-actions">
         <Link to="/login">Login</Link>
         <Link to="/register">Register</Link>
         <button onClick={logout}>Logout</button>
       </div>
-    </div>
+    </nav>
   )
 }
 

@@ -104,9 +104,11 @@ export default function Create() {
   }
 
   return (
-    <div style={{ maxWidth: 600, margin: '40px auto', fontFamily: 'system-ui' }}>
-      <h1>Add Product</h1>
-      <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
+    <main className="form-page">
+      <section className="form-card">
+      <p className="eyebrow">Admin studio</p>
+      <h1>Add a product</h1>
+      <form onSubmit={submit} className="form-stack">
         <input
           placeholder="Name"
           value={name}
@@ -129,8 +131,9 @@ export default function Create() {
           value={description}
           onChange={e => setDescription(e.target.value)}
         />
-        <button type="submit">Create</button>
+        <button type="submit">Publish product</button>
       </form>
-    </div>
+      </section>
+    </main>
   )
 }

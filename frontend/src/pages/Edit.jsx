@@ -121,9 +121,11 @@ export default function Edit() {
   }
 
   return (
-    <div style={{ maxWidth: 600, margin: '40px auto', fontFamily: 'system-ui' }}>
-      <h1>Edit Product #{id}</h1>
-      <form onSubmit={save} style={{ display: 'grid', gap: 12 }}>
+    <main className="form-page">
+      <section className="form-card">
+      <p className="eyebrow">Admin studio</p>
+      <h1>Edit product</h1>
+      <form onSubmit={save} className="form-stack">
         <input
           placeholder="Name"
           value={name}
@@ -157,6 +159,7 @@ export default function Edit() {
           </button>
         </div>
       </form>
-    </div>
+      </section>
+    </main>
   )
 }
