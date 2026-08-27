@@ -13,7 +13,49 @@ const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://') ? 
 export default function Orders() {
   const [orders, setOrders] = useState([])
   const [message, setMessage] = useState('')
+  const [editingOrder, setEditingOrder] = useState(null)
+  const [delivery, setDelivery] = useState({ phone: '', delivery_address: '' })
   const nav = useNavigate()
+
+  const cancelOrder = async orderId => {
+    if (!window.confirm(`Cancel order #${orderId}?`)) return
+    const token = localStorage.getItem('token')
+    try {
+      const response = await fetch(`${API}/orders/${orderId}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || 'Could not cancel the order')
+      const cancelled = await response.json()
+      setOrders(current => current.map(order => order.id === cancelled.id ? cancelled : order))
+      setMessage(`Order #${orderId} has been cancelled.`)
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  const startEditingDelivery = order => {
+    setEditingOrder(order.id)
+    setDelivery({ phone: order.phone, delivery_address: order.delivery_address })
+  }
+
+  const saveDelivery = async orderId => {
+    const token = localStorage.getItem('token')
+    try {
+      const response = await fetch(`${API}/orders/${orderId}/delivery`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: delivery.phone.trim(), delivery_address: delivery.delivery_address.trim() })
+      })
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || 'Could not update delivery details')
+      const updated = await response.json()
+      setOrders(current => current.map(order => order.id === updated.id ? updated : order))
+      setEditingOrder(null)
+      setMessage(`Delivery details for order #${orderId} have been updated.`)
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -39,14 +81,23 @@ export default function Orders() {
           {orders.map(order => (
             <article key={order.id} style={{ border: '1px solid #eee', borderRadius: 8, padding: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                <strong>Order #{order.id}</strong>
+                <div><strong>Order #{order.id}</strong><div className={`order-status order-status--${order.status}`}>{order.status.replace('_', ' ')}</div></div>
                 <strong>${Number(order.total).toFixed(2)}</strong>
               </div>
               <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>{new Date(order.created_at).toLocaleString()}</div>
-              <p style={{ marginBottom: 8 }}><strong>Delivery:</strong> {order.customer_name} · {order.phone}<br />{order.delivery_address}</p>
+              {editingOrder === order.id ? (
+                <div className="delivery-editor">
+                  <label>Phone number<input value={delivery.phone} onChange={event => setDelivery({ ...delivery, phone: event.target.value })} /></label>
+                  <label>Delivery address<textarea rows="3" value={delivery.delivery_address} onChange={event => setDelivery({ ...delivery, delivery_address: event.target.value })} /></label>
+                  <div><button onClick={() => saveDelivery(order.id)}>Save delivery details</button><button className="text-button" onClick={() => setEditingOrder(null)}>Cancel</button></div>
+                </div>
+              ) : <p style={{ marginBottom: 8 }}><strong>Delivery:</strong> {order.customer_name} · {order.phone}<br />{order.delivery_address}</p>}
               <ul style={{ margin: 0, paddingLeft: 20 }}>
                 {order.items.map(item => <li key={`${order.id}-${item.product_id}`}>{item.product_name} × {item.quantity} — ${(item.unit_price * item.quantity).toFixed(2)}</li>)}
               </ul>
+              {(order.status === 'pending_confirmation' || order.status === 'confirmed') && (
+                <div className="order-actions"><button className="text-button" onClick={() => startEditingDelivery(order)}>Edit delivery</button><button className="cancel-order" onClick={() => cancelOrder(order.id)}>Cancel order</button></div>
+              )}
             </article>
           ))}
         </div>

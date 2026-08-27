@@ -84,6 +84,18 @@ def migrate_order_confirmation_fields():
             if name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
 
+def migrate_order_cancellation_fields():
+    """Add the cancellation timestamp used to expire cancelled orders."""
+    inspector = inspect(engine)
+    if "orders" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("orders")}
+    if "cancelled_at" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE orders ADD COLUMN cancelled_at TIMESTAMP WITH TIME ZONE"
+            ))
+
 def migrate_user_verification_fields():
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():

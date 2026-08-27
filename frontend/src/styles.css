@@ -49,4 +49,16 @@ h2 { font-size: 1.25rem; }
 .form-stack { display: grid; gap: .85rem; }
 .form-stack button { margin-top: .35rem; }
 .auth-footer { margin: 1.25rem 0 0; color: #68746c; font-size: .92rem; text-align: center; }
+.order-status { width: fit-content; margin-top: .4rem; padding: .2rem .5rem; color: #8a610d; background: #fff2c9; border-radius: 999px; font-size: .7rem; font-weight: 700; text-transform: capitalize; }
+.order-status--confirmed { color: #15563c; background: #dff4e7; }
+.order-status--cancelled { color: #8b3935; background: #fae4e2; }
+.cancel-order { margin-top: 1rem; color: #a63430; background: transparent; border: 1px solid #e5bbb8; }
+.cancel-order:hover:not(:disabled) { color: #fff; background: #b3413c; }
+.order-actions { display: flex; gap: .65rem; margin-top: 1rem; }
+.order-actions .cancel-order { margin-top: 0; }
+.text-button { color: #176448; background: transparent; border: 1px solid #b9d5c6; }
+.text-button:hover:not(:disabled) { color: #fff; background: #176448; }
+.delivery-editor { display: grid; gap: .65rem; max-width: 520px; margin: .8rem 0; }
+.delivery-editor label { display: grid; gap: .35rem; color: #466052; font-size: .82rem; font-weight: 700; }
+.delivery-editor div { display: flex; gap: .65rem; }
 @media (max-width: 680px) { .site-nav { gap: .75rem; min-height: 64px; padding: 0 16px; overflow-x: auto; } .brand { display: none; } .nav-actions { gap: .55rem; } .page { padding: 2.4rem 16px 4rem; } .page-header { align-items: start; flex-direction: column; } .toolbar { align-items: stretch; flex-wrap: wrap; } .total-label { margin-left: 0; } .auth-page, .form-page { padding: 3rem 16px; } }

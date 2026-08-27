@@ -47,6 +47,7 @@ const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
 
 function Nav() {
   const nav = useNavigate()
+  const isSignedIn = Boolean(localStorage.getItem('token'))
 
   const logout = async () => {
     const token = localStorage.getItem('token')
@@ -70,9 +71,14 @@ function Nav() {
       <Link to="/cart">Cart</Link>
       <Link to="/orders">My Orders</Link>
       <div className="nav-actions">
-        <Link to="/login">Login</Link>
-        <Link to="/register">Register</Link>
-        <button onClick={logout}>Logout</button>
+        {isSignedIn ? (
+          <button onClick={logout}>Logout</button>
+        ) : (
+          <>
+            <Link to="/login">Login</Link>
+            <Link to="/register">Register</Link>
+          </>
+        )}
       </div>
     </nav>
   )

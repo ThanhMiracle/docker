@@ -186,3 +186,64 @@ def confirm_order(db: Session, token: str):
     order.confirmation_token = None
     db.commit(); db.refresh(order)
     return order, None
+
+
+def cancel_order(db: Session, order_id: int, user_id: int):
+    """Cancel an order owned by the current user.
+
+    Pending orders keep their cart unchanged; confirmed orders are not added
+    back to the cart automatically, which avoids overwriting later cart edits.
+    """
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.user_id == user_id,
+    ).first()
+
+    if not order:
+        return None, "not_found"
+    if order.status not in {"pending_confirmation", "confirmed"}:
+        return None, "cannot_cancel"
+
+    order.status = "cancelled"
+    order.cancelled_at = datetime.now(timezone.utc)
+    order.confirmation_token = None
+    order.confirmation_expires_at = None
+    db.commit()
+    db.refresh(order)
+    return order, None
+
+
+def update_order_delivery(db: Session, order_id: int, user_id: int, data: dict):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.user_id == user_id,
+    ).first()
+    if not order:
+        return None, "not_found"
+    if order.status not in {"pending_confirmation", "confirmed"}:
+        return None, "cannot_update"
+
+    order.phone = data["phone"]
+    order.delivery_address = data["delivery_address"]
+    db.commit()
+    db.refresh(order)
+    return order, None
+
+
+def delete_expired_cancelled_orders(db: Session, user_id: int):
+    """Permanently remove a user's cancelled orders after five minutes."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+    expired_orders = db.query(models.Order).filter(
+        models.Order.user_id == user_id,
+        models.Order.status == "cancelled",
+        models.Order.cancelled_at <= cutoff,
+    ).all()
+
+    if not expired_orders:
+        return
+
+    # ORM deletion applies the Order.items relationship cascade, so dependent
+    # order items are removed before their parent order.
+    for order in expired_orders:
+        db.delete(order)
+    db.commit()

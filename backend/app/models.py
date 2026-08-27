@@ -46,6 +46,7 @@ class Order(Base):
     status = Column(String, nullable=False, default="pending_confirmation")
     confirmation_token = Column(String, unique=True, nullable=True, index=True)
     confirmation_expires_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")

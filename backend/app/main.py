@@ -21,6 +21,7 @@ app.add_middleware(
 models.Base.metadata.create_all(bind=database.engine)
 database.migrate_order_delivery_fields()
 database.migrate_order_confirmation_fields()
+database.migrate_order_cancellation_fields()
 database.migrate_user_verification_fields()
 database.configure_single_admin(os.getenv("ADMIN_EMAIL"))
 
@@ -538,6 +539,56 @@ def confirm_order(
     return order
 
 
+@app.post(
+    "/orders/{order_id}/cancel",
+    response_model=schemas.OrderOut,
+)
+def cancel_order(
+    order_id: int,
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_user),
+):
+    order, error = crud.cancel_order(db, order_id, user.id)
+
+    if error == "not_found":
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found",
+        )
+    if error == "cannot_cancel":
+        raise HTTPException(
+            status_code=400,
+            detail="This order can no longer be cancelled",
+        )
+
+    return order
+
+
+@app.put(
+    "/orders/{order_id}/delivery",
+    response_model=schemas.OrderOut,
+)
+def update_order_delivery(
+    order_id: int,
+    data: schemas.OrderDeliveryUpdate,
+    db: Session = Depends(database.get_db),
+    user=Depends(get_current_user),
+):
+    order, error = crud.update_order_delivery(
+        db, order_id, user.id, data.model_dump()
+    )
+
+    if error == "not_found":
+        raise HTTPException(status_code=404, detail="Order not found")
+    if error == "cannot_update":
+        raise HTTPException(
+            status_code=400,
+            detail="Cancelled orders cannot be updated",
+        )
+
+    return order
+
+
 @app.get(
     "/orders/mine",
     response_model=list[schemas.OrderOut],
@@ -546,6 +597,8 @@ def my_orders(
     db: Session = Depends(database.get_db),
     user=Depends(get_current_user),
 ):
+    crud.delete_expired_cancelled_orders(db, user.id)
+
     return (
         db.query(models.Order)
         .filter(models.Order.user_id == user.id)

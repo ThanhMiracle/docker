@@ -63,6 +63,10 @@ class CheckoutCreate(BaseModel):
     phone: str = Field(min_length=3, max_length=40)
     delivery_address: str = Field(min_length=5, max_length=500)
 
+class OrderDeliveryUpdate(BaseModel):
+    phone: str = Field(min_length=3, max_length=40)
+    delivery_address: str = Field(min_length=5, max_length=500)
+
 class ConfirmOrder(BaseModel):
     token: str = Field(min_length=20)
 
