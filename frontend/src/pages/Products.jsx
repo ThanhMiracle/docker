@@ -138,6 +138,7 @@ export default function Products() {
             <div className="product-card__body">
             <div className="product-card__name">{p.name}</div>
             <div className="product-card__price">${Number(p.price).toFixed(2)}</div>
+            <div className={p.stock > 0 ? 'stock-status in-stock' : 'stock-status out-of-stock'}>{p.stock > 0 ? `${p.stock} in stock` : 'Out of stock'}</div>
 
             {p.description && (
               <div className="product-card__description">
@@ -149,7 +150,7 @@ export default function Products() {
             {p.colors?.length > 0 && <div className="colour-picker"><span>Colour</span><div className="colour-options">{p.colors.map(color => <button key={color} type="button" className={selectedColors[p.id] === color ? 'colour-option selected' : 'colour-option'} onClick={() => setSelectedColors({ ...selectedColors, [p.id]: color })}>{color}</button>)}</div></div>}
 
             <div className="product-card__actions">
-              <button onClick={() => { if (p.colors?.length && !selectedColors[p.id]) { setMessage('Please choose a colour first.'); return } addToCart(p.id, selectedColors[p.id]) }}>Add to cart</button>
+              <button disabled={p.stock < 1} onClick={() => { if (p.colors?.length && !selectedColors[p.id]) { setMessage('Please choose a colour first.'); return } addToCart(p.id, selectedColors[p.id]) }}>{p.stock > 0 ? 'Add to cart' : 'Out of stock'}</button>
               {isAdmin && <Link to={`/edit/${p.id}`}>Edit</Link>}
             </div>
             </div>

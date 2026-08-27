@@ -9,7 +9,7 @@ def send_order_confirmation(recipient: str, order_id: int, token: str):
     if not host or not sender:
         raise RuntimeError("Email is not configured. Set SMTP_HOST and SMTP_FROM.")
 
-    frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
+    frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost").rstrip("/")
     confirmation_url = f"{frontend_url}/confirm-order?{urlencode({'token': token})}"
     message = EmailMessage()
     message["Subject"] = f"Confirm your order #{order_id}"
@@ -35,7 +35,7 @@ def send_account_verification(recipient: str, token: str):
     sender = os.getenv("SMTP_FROM")
     if not host or not sender:
         raise RuntimeError("Email is not configured. Set SMTP_HOST and SMTP_FROM.")
-    frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
+    frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost").rstrip("/")
     verification_url = f"{frontend_url}/verify-email?{urlencode({'token': token})}"
     message = EmailMessage()
     message["Subject"] = "Verify your account"

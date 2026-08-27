@@ -10,7 +10,7 @@ services:
       - JWT_SECRET=change-me-please
       - JWT_EXPIRE_MINUTES=120
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
-      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:3000}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USERNAME=${SMTP_USERNAME:-}
@@ -19,12 +19,11 @@ services:
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - STORAGE_BACKEND=minio
       - MINIO_BUCKET=${MINIO_BUCKET:-uploads}
-      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL:-http://localhost:9008/uploads}
+      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL:-http://w:9008/uploads}
       - MINIO_ENDPOINT_URL=http://minio:9000
       - MINIO_AUTO_CREATE_BUCKET=true
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-    ports: ["8000:8000"]
     depends_on: [db, minio]
     networks:
       - appnet
@@ -39,7 +38,6 @@ services:
       - API_BASE=/api
   
 
-    ports: ["3000:80"]
     depends_on: [api]
     networks:
       - appnet

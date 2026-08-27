@@ -36,6 +36,7 @@ h2 { font-size: 1.25rem; }
 .product-card__body { padding: 1rem; }
 .product-card__name { font-size: 1.07rem; font-weight: 700; }
 .product-card__price { margin-top: .3rem; color: #126847; font-size: 1.1rem; font-weight: 700; }
+.stock-status { margin-top: .35rem; font-size: .78rem; font-weight: 700; }.in-stock { color: #18704b; }.out-of-stock { color: #a43833; }
 .product-card__description { min-height: 2.4em; margin-top: .55rem; color: #69776f; font-size: .84rem; line-height: 1.45; }
 .product-thumbnails { display: flex; align-items: center; gap: .4rem; margin-top: .7rem; }
 .product-thumbnails img { width: 35px !important; height: 35px !important; border: 1px solid #d9e2db; border-radius: 7px !important; object-fit: cover; }

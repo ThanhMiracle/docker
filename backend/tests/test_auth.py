@@ -5,7 +5,7 @@ API_PRODUCTS = "/products/"
 
 def test_register_login_and_create_product(client):
     # 1) Đăng ký
-    user = {"email": "alice@example.com", "password": "secret123"}
+    user = {"name": "Alice", "email": "alice@example.com", "password": "secret123"}
     r = client.post(API_REGISTER, json=user)
     assert r.status_code in (200, 400)  # 400 nếu đã chạy test trước đó
 

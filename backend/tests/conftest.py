@@ -42,9 +42,9 @@ def client():
 # ✅ Fixture mặc định bạn đang thiếu
 @pytest.fixture
 def user_data():
-    return {"email": "alice@example.com", "password": "secret123"}
+    return {"name": "Alice", "email": "alice@example.com", "password": "secret123"}
 
 # ✅ Nếu bài test nào có dùng other_user_data thì mới cần cái này
 @pytest.fixture
 def other_user_data():
-    return {"email": "bob@example.com", "password": "secret456"}
+    return {"name": "Bob", "email": "bob@example.com", "password": "secret456"}

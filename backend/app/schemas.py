@@ -3,10 +3,12 @@ from typing import Optional, List
 from datetime import datetime
 from pydantic import ConfigDict
 class UserCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
     email: EmailStr
     password: str
 class UserOut(BaseModel):
     id: int
+    name: str
     email: EmailStr
     is_admin: bool
     email_verified: bool
@@ -20,6 +22,7 @@ class EmailToken(BaseModel):
 class ProductBase(BaseModel):
     name: str
     price: float
+    stock: int = Field(default=0, ge=0)
     image_url: Optional[str] = None
     description: Optional[str] = None
 class ProductCreate(ProductBase):

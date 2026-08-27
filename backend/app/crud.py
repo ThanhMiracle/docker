@@ -3,10 +3,11 @@ import json
 from datetime import datetime, timedelta, timezone
 import secrets
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from . import models, security
 def create_user(
     db: Session,
+    name: str,
     email: str,
     password: str,
     is_admin: bool = False
@@ -23,6 +24,7 @@ def create_user(
         )
 
     user = models.User(
+        name=name.strip(),
         email=email,
         hashed_password=security.get_password_hash(password),
         is_admin=is_admin,
@@ -128,6 +130,27 @@ def list_my_products(db: Session, owner_id: int, skip: int=0, limit: int=12, q: 
 def get_cart_items(db: Session, user_id: int):
     return db.query(models.CartItem).filter(models.CartItem.user_id == user_id).all()
 
+def available_stock_for_cart_item(db: Session, user_id: int, product_id: int, selected_color: str | None):
+    product = get_product(db, product_id)
+    reserved = db.query(func.coalesce(func.sum(models.CartItem.quantity), 0)).filter(
+        models.CartItem.user_id == user_id,
+        models.CartItem.product_id == product_id,
+    ).scalar()
+    return product.stock - reserved
+
+def can_set_cart_quantity(db: Session, user_id: int, product_id: int, selected_color: str | None, quantity: int):
+    product = get_product(db, product_id)
+    item = db.query(models.CartItem).filter(
+        models.CartItem.user_id == user_id,
+        models.CartItem.product_id == product_id,
+        models.CartItem.selected_color == selected_color,
+    ).first()
+    reserved = db.query(func.coalesce(func.sum(models.CartItem.quantity), 0)).filter(
+        models.CartItem.user_id == user_id,
+        models.CartItem.product_id == product_id,
+    ).scalar()
+    return product and quantity <= product.stock - reserved + (item.quantity if item else 0)
+
 def add_cart_item(db: Session, user_id: int, product_id: int, quantity: int, selected_color: str | None = None):
     item = db.query(models.CartItem).filter(
         models.CartItem.user_id == user_id, models.CartItem.product_id == product_id,
@@ -193,16 +216,34 @@ def confirm_order(db: Session, token: str):
     if expires_at < datetime.now(timezone.utc):
         return None, "expired"
 
+    required_quantities = {}
+    for order_item in order.items:
+        required_quantities[order_item.product_id] = (
+            required_quantities.get(order_item.product_id, 0) + order_item.quantity
+        )
+
+    products = {}
+    for product_id, required_quantity in required_quantities.items():
+        product = db.query(models.Product).filter(
+            models.Product.id == product_id
+        ).with_for_update().first()
+        if not product or product.stock < required_quantity:
+            return None, "out_of_stock"
+        products[product_id] = product
+
     for order_item in order.items:
         cart_item = db.query(models.CartItem).filter(
             models.CartItem.user_id == order.user_id,
             models.CartItem.product_id == order_item.product_id,
+            models.CartItem.selected_color == order_item.selected_color,
         ).first()
         if cart_item:
             if cart_item.quantity <= order_item.quantity:
                 db.delete(cart_item)
             else:
                 cart_item.quantity -= order_item.quantity
+    for product_id, required_quantity in required_quantities.items():
+        products[product_id].stock -= required_quantity
     order.status = "confirmed"
     order.confirmation_token = None
     db.commit(); db.refresh(order)
@@ -224,6 +265,14 @@ def cancel_order(db: Session, order_id: int, user_id: int):
         return None, "not_found"
     if order.status not in {"pending_confirmation", "confirmed"}:
         return None, "cannot_cancel"
+
+    if order.status == "confirmed":
+        for order_item in order.items:
+            product = db.query(models.Product).filter(
+                models.Product.id == order_item.product_id
+            ).with_for_update().first()
+            if product:
+                product.stock += order_item.quantity
 
     order.status = "cancelled"
     order.cancelled_at = datetime.now(timezone.utc)

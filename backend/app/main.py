@@ -1,29 +1,58 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 import os
+import json
+import logging
+import time
+import uuid
 
-from . import database, models, crud, schemas, security, storage, email_service
+from . import database, models, crud, schemas, security, storage, email_service, rate_limit
+from .observability import configure_logging
 from .deps import get_current_user, get_current_admin
 
 
+configure_logging()
+logger = logging.getLogger("shop.api")
 app = FastAPI(title="Simple Shop API (v3-fix)")
+
+cors_origins = [
+    origin.strip() for origin in os.getenv(
+        "CORS_ORIGINS", "http://localhost,http://localhost:3000,http://localhost:8080"
+    ).split(",") if origin.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", uuid.uuid4().hex)
+    started = time.perf_counter()
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(json.dumps({
+        "event": "request", "request_id": request_id,
+        "method": request.method, "path": request.url.path,
+        "status": response.status_code,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+    }))
+    return response
 
 models.Base.metadata.create_all(bind=database.engine)
 database.migrate_order_delivery_fields()
 database.migrate_order_confirmation_fields()
 database.migrate_order_cancellation_fields()
 database.migrate_product_variant_fields()
+database.migrate_product_inventory_fields()
 database.migrate_user_verification_fields()
+database.migrate_user_profile_fields()
 database.configure_single_admin(os.getenv("ADMIN_EMAIL"))
 
 
@@ -68,6 +97,7 @@ def register(
 
     created_user = crud.create_user(
         db=db,
+        name=user.name,
         email=email,
         password=user.password,
         is_admin=is_admin,
@@ -101,7 +131,11 @@ def register(
 def login(
     form: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(database.get_db),
+    request: Request = None,
 ):
+    client_ip = request.client.host if request and request.client else "unknown"
+    if not rate_limit.allow_login(client_ip):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again shortly.")
     email = form.username.strip().lower()
 
     user = crud.get_user_by_email(db, email)
@@ -110,6 +144,7 @@ def login(
         form.password,
         user.hashed_password,
     ):
+        rate_limit.record_failed_login(client_ip)
         raise HTTPException(
             status_code=400,
             detail="Incorrect email or password",
@@ -127,6 +162,7 @@ def login(
     token = security.create_access_token(
         {"sub": user.email}
     )
+    rate_limit.clear_login_attempts(client_ip)
 
     return {
         "access_token": token,
@@ -390,6 +426,12 @@ def add_to_cart(
             detail="Product not found",
         )
 
+    available = crud.available_stock_for_cart_item(
+        db, user.id, item.product_id, item.selected_color
+    )
+    if item.quantity > available:
+        raise HTTPException(status_code=400, detail="Not enough stock available")
+
     crud.add_cart_item(
         db,
         user.id,
@@ -419,6 +461,11 @@ def update_cart_item(
             status_code=400,
             detail="Quantity must be at least 1",
         )
+
+    if not crud.can_set_cart_quantity(
+        db, user.id, product_id, item.selected_color, item.quantity
+    ):
+        raise HTTPException(status_code=400, detail="Not enough stock available")
 
     updated = crud.update_cart_item(
         db,
@@ -540,6 +587,9 @@ def confirm_order(
             status_code=400,
             detail="Confirmation link has expired",
         )
+
+    if error == "out_of_stock":
+        raise HTTPException(status_code=409, detail="One or more products are out of stock")
 
     return order
 

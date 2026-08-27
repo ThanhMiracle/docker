@@ -53,7 +53,9 @@ export default function VerifyEmail() {
           })
         })
 
-        const data = await response.json()
+        const data = await response.json().catch(() => ({
+          detail: 'Could not reach the verification service. Open the app through the Nginx address.'
+        }))
 
         if (!response.ok) {
           throw new Error(data.detail || 'Email verification failed')

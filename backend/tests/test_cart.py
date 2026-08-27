@@ -2,7 +2,7 @@ def auth_header(token):
     return {"Authorization": f"Bearer {token}"}
 
 def login_or_register(client, email, password):
-    client.post("/auth/register", json={"email": email, "password": password})
+    client.post("/auth/register", json={"name": email.split("@")[0].title(), "email": email, "password": password})
     response = client.post(
         "/auth/login", data={"username": email, "password": password},
         headers={"Content-Type": "application/x-www-form-urlencoded"},

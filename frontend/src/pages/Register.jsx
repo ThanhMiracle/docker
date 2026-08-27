@@ -35,13 +35,14 @@ const API = apiUrl(API_BASE)
 
 export default function Register() {
   const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
   const [password, setPassword] = useState('')
 
   const register = async () => {
     const r = await fetch(`${API}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ name, email, password })
     })
     if (r.ok) {
       alert('Registered! You can login now.')
@@ -57,6 +58,11 @@ export default function Register() {
       <h1>Create your account.</h1>
       <p>Save your cart and keep track of every order in one place.</p>
       <div className="form-stack">
+        <input
+          placeholder="Full name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+        />
         <input
           placeholder="Email"
           value={email}

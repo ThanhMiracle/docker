@@ -113,6 +113,17 @@ def migrate_product_variant_fields():
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
 
+def migrate_product_inventory_fields():
+    inspector = inspect(engine)
+    if "products" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("products")}
+    if "stock" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0"
+            ))
+
 def migrate_user_verification_fields():
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():
@@ -128,3 +139,14 @@ def migrate_user_verification_fields():
         for name, definition in required_columns.items():
             if name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
+
+def migrate_user_profile_fields():
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "name" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE users ADD COLUMN name VARCHAR(120) NOT NULL DEFAULT ''"
+            ))

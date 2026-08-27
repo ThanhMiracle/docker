@@ -39,6 +39,7 @@ export default function Edit() {
 
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
+  const [stock, setStock] = useState('0')
   const [image_url, setImageUrl] = useState('')
   const [description, setDescription] = useState('')
 
@@ -50,6 +51,7 @@ export default function Edit() {
         const p = await res.json()
         setName(p.name)
         setPrice(p.price)
+        setStock(String(p.stock ?? 0))
         setImageUrl(p.image_url || '')
         setDescription(p.description || '')
       } else {
@@ -70,6 +72,7 @@ export default function Edit() {
     const body = {
       name,
       price: Number(price),
+      stock: Number(stock),
       image_url,
       description
     }
@@ -130,6 +133,7 @@ export default function Edit() {
           value={name}
           onChange={e => setName(e.target.value)}
         />
+        <input placeholder="Stock quantity" type="number" min="0" value={stock} onChange={e => setStock(e.target.value)} />
         <input
           placeholder="Price"
           type="number"

@@ -7,6 +7,7 @@ from .database import Base
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False, default="")
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     is_admin = Column(Boolean, default=False)
@@ -22,6 +23,7 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, index=True)
     price = Column(Float, nullable=False)
+    stock = Column(Integer, nullable=False, default=0)
     image_url = Column(String, nullable=True)
     image_urls_json = Column(Text, nullable=True)
     colors_json = Column(Text, nullable=True)

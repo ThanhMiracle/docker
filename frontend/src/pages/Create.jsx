@@ -38,6 +38,7 @@ const API = apiUrl(API_BASE)
 export default function Create() {
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
+  const [stock, setStock] = useState('0')
   const [files, setFiles] = useState([])
   const [colors, setColors] = useState([])
   const [colorInput, setColorInput] = useState('')
@@ -80,6 +81,7 @@ export default function Create() {
     const body = {
       name,
       price: Number(price),
+      stock: Number(stock),
       image_url: images[0] || '',
       images,
       colors,
@@ -99,6 +101,7 @@ export default function Create() {
       alert('Created!')
       setName('')
       setPrice('')
+      setStock('0')
       setFiles([])
       setColors([])
       setColorInput('')
@@ -119,6 +122,7 @@ export default function Create() {
           value={name}
           onChange={e => setName(e.target.value)}
         />
+        <input placeholder="Stock quantity" type="number" min="0" value={stock} onChange={e => setStock(e.target.value)} />
         <input
           placeholder="Price"
           type="number"
