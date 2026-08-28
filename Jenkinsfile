@@ -71,7 +71,12 @@ pipeline {
         }
 
         stage('Build release images') {
-            when { expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE } }
+            when {
+                allOf {
+                    branch 'dev'
+                    expression { return params.PUSH_TO_DOCKERHUB }
+                }
+            }
             steps {
                 sh '''
                     set -eu
@@ -84,11 +89,8 @@ pipeline {
         stage('Push Docker Hub images') {
             when {
                 allOf {
-                    anyOf {
-                        branch 'dev'
-                        branch 'main'
-                    }
-                    expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE }
+                    branch 'dev'
+                    expression { return params.PUSH_TO_DOCKERHUB }
                 }
             }
             steps {
