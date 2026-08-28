@@ -30,9 +30,14 @@ pipeline {
             steps {
                 script {
                     env.IMAGE_TAG = params.DOCKER_IMAGE_TAG?.trim() ? params.DOCKER_IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
+                    // Do not inherit stale Docker credentials from the Jenkins agent.
+                    // The push stage logs in to this isolated config when required.
+                    env.DOCKER_CONFIG = "${env.WORKSPACE}/.docker-ci-${env.BUILD_NUMBER}"
                 }
                 sh '''
                     set -eu
+                    mkdir -p "$DOCKER_CONFIG"
+                    chmod 700 "$DOCKER_CONFIG"
                     command -v docker
                     command -v ssh
                     command -v scp
@@ -147,6 +152,12 @@ pipeline {
             sh '''
                 docker logout "$DOCKER_REGISTRY" >/dev/null 2>&1 || true
                 docker image prune -f >/dev/null 2>&1 || true
+
+                # This directory can contain the temporary Docker Hub token.
+                expected_config="$WORKSPACE/.docker-ci-$BUILD_NUMBER"
+                if [ "${DOCKER_CONFIG:-}" = "$expected_config" ]; then
+                    rm -rf -- "$expected_config"
+                fi
             '''
         }
     }
