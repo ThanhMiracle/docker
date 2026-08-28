@@ -8,8 +8,9 @@ pipeline {
     }
 
     parameters {
-        booleanParam(name: 'DEPLOY_TO_AZURE', defaultValue: false, description: 'Push images and deploy to the Azure VM after tests pass')
-        string(name: 'RELEASE_TAG', defaultValue: '', description: 'Optional Docker tag; defaults to v<Jenkins build number>')
+        booleanParam(name: 'PUSH_TO_DOCKERHUB', defaultValue: false, description: 'Push API and frontend images to Docker Hub after tests pass')
+        booleanParam(name: 'DEPLOY_TO_AZURE', defaultValue: false, description: 'Deploy the pushed images to the Azure VM (main branch only)')
+        string(name: 'DOCKER_IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
         string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure Linux VM public DNS name or IP')
         string(name: 'AZURE_VM_USER', defaultValue: 'azureuser', description: 'SSH user on the Azure VM')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute application directory on the VM')
@@ -28,7 +29,7 @@ pipeline {
         stage('Initialize') {
             steps {
                 script {
-                    env.IMAGE_TAG = params.RELEASE_TAG?.trim() ? params.RELEASE_TAG.trim() : "v${env.BUILD_NUMBER}"
+                    env.IMAGE_TAG = params.DOCKER_IMAGE_TAG?.trim() ? params.DOCKER_IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
                 }
                 sh '''
                     set -eu
@@ -70,7 +71,7 @@ pipeline {
         }
 
         stage('Build release images') {
-            when { expression { return params.DEPLOY_TO_AZURE } }
+            when { expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE } }
             steps {
                 sh '''
                     set -eu
@@ -83,8 +84,11 @@ pipeline {
         stage('Push Docker Hub images') {
             when {
                 allOf {
-                    branch 'main'
-                    expression { return params.DEPLOY_TO_AZURE }
+                    anyOf {
+                        branch 'dev'
+                        branch 'main'
+                    }
+                    expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE }
                 }
             }
             steps {
