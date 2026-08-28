@@ -71,12 +71,7 @@ pipeline {
         }
 
         stage('Build release images') {
-            when {
-                allOf {
-                    branch 'dev'
-                    expression { return params.PUSH_TO_DOCKERHUB }
-                }
-            }
+            when { expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE } }
             steps {
                 sh '''
                     set -eu
@@ -87,12 +82,7 @@ pipeline {
         }
 
         stage('Push Docker Hub images') {
-            when {
-                allOf {
-                    branch 'dev'
-                    expression { return params.PUSH_TO_DOCKERHUB }
-                }
-            }
+            when { expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE } }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: "${params.DOCKERHUB_CREDENTIAL_ID}",
@@ -107,6 +97,14 @@ pipeline {
                         docker push ${API_IMAGE}:${IMAGE_TAG}
                         docker push ${FRONTEND_IMAGE}:latest
                         docker push ${API_IMAGE}:latest
+
+                        # The registry now has the release; remove local tags
+                        # and their unreferenced layers from the Jenkins agent.
+                        docker image rm \
+                          ${FRONTEND_IMAGE}:${IMAGE_TAG} \
+                          ${API_IMAGE}:${IMAGE_TAG} \
+                          ${FRONTEND_IMAGE}:latest \
+                          ${API_IMAGE}:latest || true
                     '''
                 }
             }
