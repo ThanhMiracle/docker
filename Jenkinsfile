@@ -86,18 +86,30 @@ pipeline {
             }
         }
 
+        stage('Docker Hub Login') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-cred',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login \
+                            --username "$DOCKER_USERNAME" \
+                            --password-stdin
+                    '''
+                }
+            }
+        }
+
         stage('Push Docker Hub images') {
             when { expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE } }
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: "${params.DOCKERHUB_CREDENTIAL_ID}",
-                    usernameVariable: 'DOCKERHUB_USERNAME',
-                    passwordVariable: 'DOCKERHUB_TOKEN'
-                )]) {
                     sh '''
                         set -eu
                         set +x
-                        printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" --username "$DOCKERHUB_USERNAME" --password-stdin
                         docker push "${FRONTEND_IMAGE}:${IMAGE_TAG}"
                         docker push "${API_IMAGE}:${IMAGE_TAG}"
 
@@ -109,7 +121,6 @@ pipeline {
                     '''
                 }
             }
-        }
 
         stage('Deploy to Azure VM') {
             when {
