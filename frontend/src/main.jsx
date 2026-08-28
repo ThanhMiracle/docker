@@ -13,6 +13,7 @@ import VerifyEmail from './pages/VerifyEmail'
 import Chat from './pages/Chat'
 import ChatWidget from './components/ChatWidget'
 import Profile from './pages/Profile'
+import ProductDetail from './pages/ProductDetail'
 import './styles.css'
 import { apiUrl } from './api'
 import { chatSocketUrl } from './chat'
@@ -117,6 +118,7 @@ createRoot(document.getElementById('root')).render(
       <ChatWidget />
       <Routes>
         <Route path="/" element={<Products />} />
+        <Route path="/products/:id" element={<ProductDetail />} />
         <Route path="/create" element={<Create />} />
         <Route path="/edit/:id" element={<Edit />} />
         <Route path="/login" element={<Login />} />

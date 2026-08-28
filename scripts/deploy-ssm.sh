@@ -7,6 +7,7 @@ ALB_SCHEME="${3:-https}"
 AWS_DEPLOY_REGION="${4:-}"
 PROD_ENV_PARAMETER="${5:-}"
 IMAGE_TAG="${6:-}"
+PUBLIC_BASE_URL="${7:-}"
 
 for value_name in ASG_NAME ALB_NAME AWS_DEPLOY_REGION PROD_ENV_PARAMETER IMAGE_TAG; do
   if [ -z "${!value_name}" ]; then
@@ -51,14 +52,23 @@ fi
 echo "Deploying to $MANAGED_INSTANCE_COUNT SSM-managed ASG instance(s)"
 
 COMPOSE_BASE64="$(base64 -w 0 docker-compose.prod.yml)"
-NGINX_BASE64="$(base64 -w 0 nginx/nginx.conf)"
-API_BASE="${ALB_SCHEME}://${ALB_DNS_NAME}/api"
-FRONTEND_BASE_URL="${ALB_SCHEME}://${ALB_DNS_NAME}"
+NGINX_BASE64="$(base64 -w 0 nginx/nginx.prod.conf)"
+HEALTH_MONITOR_BASE64="$(base64 -w 0 scripts/health-monitor.sh)"
+BACKUP_SCRIPT_BASE64="$(base64 -w 0 scripts/backup-postgres.sh)"
+
+if [ -n "$PUBLIC_BASE_URL" ]; then
+  FRONTEND_BASE_URL="${PUBLIC_BASE_URL%/}"
+else
+  FRONTEND_BASE_URL="${ALB_SCHEME}://${ALB_DNS_NAME}"
+fi
+API_BASE="${FRONTEND_BASE_URL}/api"
 
 COMMAND_PARAMETERS="$(
   jq -n \
     --arg compose "$COMPOSE_BASE64" \
     --arg nginx "$NGINX_BASE64" \
+    --arg health_monitor "$HEALTH_MONITOR_BASE64" \
+    --arg backup_script "$BACKUP_SCRIPT_BASE64" \
     --arg region "$AWS_DEPLOY_REGION" \
     --arg env_parameter "$PROD_ENV_PARAMETER" \
     --arg api_base "$API_BASE" \
@@ -67,9 +77,12 @@ COMMAND_PARAMETERS="$(
     '{
       commands: [
         "set -eu",
-        "install -d -m 755 /opt/my-app/nginx",
+        "install -d -m 755 /opt/my-app/nginx /opt/my-app/scripts",
         ("printf %s " + ($compose | @sh) + " | base64 -d > /opt/my-app/docker-compose.prod.yml"),
         ("printf %s " + ($nginx | @sh) + " | base64 -d > /opt/my-app/nginx/nginx.conf"),
+        ("printf %s " + ($health_monitor | @sh) + " | base64 -d > /opt/my-app/scripts/health-monitor.sh"),
+        ("printf %s " + ($backup_script | @sh) + " | base64 -d > /opt/my-app/scripts/backup-postgres.sh"),
+        "chmod 755 /opt/my-app/scripts/health-monitor.sh /opt/my-app/scripts/backup-postgres.sh",
         ("aws ssm get-parameter --name " + ($env_parameter | @sh) + " --with-decryption --region " + ($region | @sh) + " --query Parameter.Value --output text > /opt/my-app/.env"),
         "chmod 600 /opt/my-app/.env",
         "sed -i '\''/^API_BASE=/d'\'' /opt/my-app/.env",

@@ -136,7 +136,7 @@ export default function Products() {
             )}
 
             <div className="product-card__body">
-            <div className="product-card__name">{p.name}</div>
+            <Link className="product-card__name" to={`/products/${p.id}`}>{p.name}</Link>
             <div className="product-card__price">${Number(p.price).toFixed(2)}</div>
             <div className={p.stock > 0 ? 'stock-status in-stock' : 'stock-status out-of-stock'}>{p.stock > 0 ? `${p.stock} in stock` : 'Out of stock'}</div>
 
@@ -151,6 +151,7 @@ export default function Products() {
 
             <div className="product-card__actions">
               <button disabled={p.stock < 1} onClick={() => { if (p.colors?.length && !selectedColors[p.id]) { setMessage('Please choose a colour first.'); return } addToCart(p.id, selectedColors[p.id]) }}>{p.stock > 0 ? 'Add to cart' : 'Out of stock'}</button>
+              <Link to={`/products/${p.id}`}>View details</Link>
               {isAdmin && <Link to={`/edit/${p.id}`}>Edit</Link>}
             </div>
             </div>

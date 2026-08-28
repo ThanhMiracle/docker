@@ -11,10 +11,9 @@ services:
       - frontend
       - api
     ports:
-      - "80:80"        # Mở port 80 ra Internet
-      # Nếu muốn HTTPS bằng reverse proxy khác/certbot thì thêm 443 ở đây
+      - "80:80" # Your Azure HTTPS gateway/proxy forwards traffic to this port.
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
     restart: unless-stopped
     init: true
     healthcheck:
@@ -70,3 +69,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  # Sends a Slack-compatible webhook alert only when health changes state.
+  health-monitor:
+    image: curlimages/curl:8.10.1
+    container_name: health-monitor
+    command: ["sh", "/monitor/health-monitor.sh"]
+    environment:
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+      - HEALTHCHECK_INTERVAL_SECONDS=${HEALTHCHECK_INTERVAL_SECONDS:-60}
+    volumes:
+      - ./scripts/health-monitor.sh:/monitor/health-monitor.sh:ro
+    depends_on:
+      nginx:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    networks: [appnet]
