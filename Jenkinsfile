@@ -4,51 +4,46 @@ pipeline {
     options {
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        skipDefaultCheckout(false)
     }
 
     parameters {
-        booleanParam(name: 'PUSH_TO_DOCKERHUB', defaultValue: false, description: 'Push API and frontend images to Docker Hub after tests pass')
-        booleanParam(name: 'DEPLOY_TO_AZURE', defaultValue: false, description: 'Deploy the pushed images to the Azure VM (main branch only)')
-        string(name: 'DOCKER_IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
-        string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure Linux VM public DNS name or IP')
-        string(name: 'AZURE_VM_USER', defaultValue: 'azureuser', description: 'SSH user on the Azure VM')
-        string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute application directory on the VM')
-        string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public app URL, e.g. https://shop.example.com')
-        string(name: 'AZURE_SSH_CREDENTIAL_ID', defaultValue: 'azure-vm-ssh', description: 'Jenkins SSH private-key credential ID')
-        string(name: 'DOCKERHUB_CREDENTIAL_ID', defaultValue: 'dockerhub-cred', description: 'Jenkins Docker Hub credential ID')
-        string(name: 'FRONTEND_IMAGE', defaultValue: 'thanh2909/my-frontend', description: 'Frontend Docker Hub repository')
-        string(name: 'API_IMAGE', defaultValue: 'thanh2909/my-api', description: 'API Docker Hub repository')
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
     }
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
+        FRONTEND_IMAGE = 'thanh2909/my-frontend'
+        API_IMAGE = 'thanh2909/my-api'
     }
 
     stages {
         stage('Initialize') {
             steps {
                 script {
-                    env.IMAGE_TAG = params.DOCKER_IMAGE_TAG?.trim() ? params.DOCKER_IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
-                    // Do not inherit stale Docker credentials from the Jenkins agent.
-                    // The push stage logs in to this isolated config when required.
+                    env.RELEASE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
+
+                    // Isolate this build from stale credentials on the agent.
                     env.DOCKER_CONFIG = "${env.WORKSPACE}/.docker-ci-${env.BUILD_NUMBER}"
                 }
                 sh '''
                     set -eu
+                    command -v docker
                     mkdir -p "$DOCKER_CONFIG"
                     chmod 700 "$DOCKER_CONFIG"
-                    command -v docker
-                    echo "Release tag: ${IMAGE_TAG}"
+                    echo "Building release: $RELEASE_TAG"
                 '''
             }
         }
 
-        stage('Backend tests') {
+        stage('Test backend') {
             steps {
                 sh '''
                     set -eu
-                    docker build --target test --tag my-api-test:${IMAGE_TAG} ./backend
+                    docker build \
+                      --target test \
+                      --tag "my-api-test:$RELEASE_TAG" \
+                      ./backend
+
                     docker run --rm \
                       -e DATABASE_URL=sqlite:////tmp/test.db \
                       -e JWT_SECRET=ci-only-secret \
@@ -58,36 +53,32 @@ pipeline {
                       -e MINIO_BUCKET=ci-test-bucket \
                       -e MINIO_PUBLIC_URL=http://minio.invalid/uploads \
                       -e MINIO_ENDPOINT_URL=http://minio.invalid \
-                      my-api-test:${IMAGE_TAG}
+                      "my-api-test:$RELEASE_TAG"
                 '''
             }
         }
 
-        stage('Frontend build') {
+        stage('Build images') {
             steps {
                 sh '''
                     set -eu
-                    docker build --target build ./frontend
+                    docker build \
+                      --target runtime \
+                      --tag "$API_IMAGE:$RELEASE_TAG" \
+                      ./backend
+
+                    docker build \
+                      --target runtime \
+                      --tag "$FRONTEND_IMAGE:$RELEASE_TAG" \
+                      ./frontend
                 '''
             }
         }
 
-        stage('Build release images') {
-            when { expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE } }
-            steps {
-                sh '''
-                    set -eu
-                    docker build --tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ./frontend
-                    docker build --tag ${API_IMAGE}:${IMAGE_TAG} ./backend
-                '''
-            }
-        }
-
-        stage('Push Docker Hub images') {
-            when { expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE } }
+        stage('Push images') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: "${params.DOCKERHUB_CREDENTIAL_ID}",
+                    credentialsId: 'dockerhub-cred',
                     usernameVariable: 'DOCKERHUB_USERNAME',
                     passwordVariable: 'DOCKERHUB_TOKEN'
                 )]) {
@@ -97,47 +88,9 @@ pipeline {
                         printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" \
                           --username "$DOCKERHUB_USERNAME" \
                           --password-stdin
-                        docker push "${FRONTEND_IMAGE}:${IMAGE_TAG}"
-                        docker push "${API_IMAGE}:${IMAGE_TAG}"
 
-                        # The registry now has the release; remove local tags
-                        # and their unreferenced layers from the Jenkins agent.
-                        docker image rm \
-                          "${FRONTEND_IMAGE}:${IMAGE_TAG}" \
-                          "${API_IMAGE}:${IMAGE_TAG}" || true
-                    '''
-                }
-            }
-        }
-
-        stage('Deploy to Azure VM') {
-            when {
-                allOf {
-                    branch 'main'
-                    expression { return params.DEPLOY_TO_AZURE }
-                }
-            }
-            steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: "${params.AZURE_SSH_CREDENTIAL_ID}",
-                    keyFileVariable: 'AZURE_SSH_KEY',
-                    usernameVariable: 'CREDENTIAL_VM_USER'
-                )]) {
-                    sh '''
-                        set -eu
-                        command -v ssh
-                        command -v scp
-                        test -n "$AZURE_VM_HOST"
-                        test -n "$PUBLIC_BASE_URL"
-                        ./scripts/deploy-azure-vm.sh \
-                          "$AZURE_VM_HOST" \
-                          "${AZURE_VM_USER:-$CREDENTIAL_VM_USER}" \
-                          "$AZURE_SSH_KEY" \
-                          "$DEPLOY_PATH" \
-                          "$IMAGE_TAG" \
-                          "$PUBLIC_BASE_URL" \
-                          "$FRONTEND_IMAGE" \
-                          "$API_IMAGE"
+                        docker push "$API_IMAGE:$RELEASE_TAG"
+                        docker push "$FRONTEND_IMAGE:$RELEASE_TAG"
                     '''
                 }
             }
@@ -147,15 +100,18 @@ pipeline {
     post {
         always {
             sh '''
-                # This directory can contain the temporary Docker Hub token.
                 expected_config="$WORKSPACE/.docker-ci-$BUILD_NUMBER"
                 if [ "${DOCKER_CONFIG:-}" = "$expected_config" ]; then
                     docker logout "$DOCKER_REGISTRY" >/dev/null 2>&1 || true
                     rm -rf -- "$expected_config"
                 fi
 
-                if [ -n "${IMAGE_TAG:-}" ]; then
-                    docker image rm "my-api-test:$IMAGE_TAG" >/dev/null 2>&1 || true
+                if [ -n "${RELEASE_TAG:-}" ]; then
+                    docker image rm \
+                      "my-api-test:$RELEASE_TAG" \
+                      "$API_IMAGE:$RELEASE_TAG" \
+                      "$FRONTEND_IMAGE:$RELEASE_TAG" \
+                      >/dev/null 2>&1 || true
                 fi
             '''
         }
