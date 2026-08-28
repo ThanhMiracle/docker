@@ -12,6 +12,7 @@ import ConfirmOrder from './pages/ConfirmOrder'
 import VerifyEmail from './pages/VerifyEmail'
 import Chat from './pages/Chat'
 import ChatWidget from './components/ChatWidget'
+import SessionTimeout from './components/SessionTimeout'
 import Profile from './pages/Profile'
 import ProductDetail from './pages/ProductDetail'
 import './styles.css'
@@ -115,6 +116,7 @@ createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <Nav />
+      <SessionTimeout />
       <ChatWidget />
       <Routes>
         <Route path="/" element={<Products />} />

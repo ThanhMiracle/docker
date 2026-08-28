@@ -3,7 +3,6 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
-        timestamps()
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
@@ -45,7 +44,7 @@ pipeline {
                       -e DATABASE_URL=sqlite:////tmp/test.db \
                       -e JWT_SECRET=ci-only-secret \
                       -e JWT_EXPIRE_MINUTES=120 \
-                      -e ADMIN_EMAIL=alice@example.com \
+                      -e ADMIN_EMAIL=admin@example.com \
                       -e STORAGE_BACKEND=minio \
                       -e MINIO_BUCKET=ci-test-bucket \
                       -e MINIO_PUBLIC_URL=http://minio.invalid/uploads \
