@@ -39,9 +39,6 @@ pipeline {
                     mkdir -p "$DOCKER_CONFIG"
                     chmod 700 "$DOCKER_CONFIG"
                     command -v docker
-                    command -v ssh
-                    command -v scp
-                    docker compose version
                     echo "Release tag: ${IMAGE_TAG}"
                 '''
             }
@@ -86,30 +83,20 @@ pipeline {
             }
         }
 
-        stage('Docker Hub Login') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-cred',
-                        usernameVariable: 'DOCKER_USERNAME',
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )
-                ]) {
-                    sh '''
-                        echo "$DOCKER_PASSWORD" | docker login \
-                            --username "$DOCKER_USERNAME" \
-                            --password-stdin
-                    '''
-                }
-            }
-        }
-
         stage('Push Docker Hub images') {
             when { expression { return params.PUSH_TO_DOCKERHUB || params.DEPLOY_TO_AZURE } }
             steps {
+                withCredentials([usernamePassword(
+                    credentialsId: "${params.DOCKERHUB_CREDENTIAL_ID}",
+                    usernameVariable: 'DOCKERHUB_USERNAME',
+                    passwordVariable: 'DOCKERHUB_TOKEN'
+                )]) {
                     sh '''
                         set -eu
                         set +x
+                        printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" \
+                          --username "$DOCKERHUB_USERNAME" \
+                          --password-stdin
                         docker push "${FRONTEND_IMAGE}:${IMAGE_TAG}"
                         docker push "${API_IMAGE}:${IMAGE_TAG}"
 
@@ -121,6 +108,7 @@ pipeline {
                     '''
                 }
             }
+        }
 
         stage('Deploy to Azure VM') {
             when {
@@ -137,6 +125,8 @@ pipeline {
                 )]) {
                     sh '''
                         set -eu
+                        command -v ssh
+                        command -v scp
                         test -n "$AZURE_VM_HOST"
                         test -n "$PUBLIC_BASE_URL"
                         ./scripts/deploy-azure-vm.sh \
@@ -157,13 +147,15 @@ pipeline {
     post {
         always {
             sh '''
-                docker logout "$DOCKER_REGISTRY" >/dev/null 2>&1 || true
-                docker image prune -f >/dev/null 2>&1 || true
-
                 # This directory can contain the temporary Docker Hub token.
                 expected_config="$WORKSPACE/.docker-ci-$BUILD_NUMBER"
                 if [ "${DOCKER_CONFIG:-}" = "$expected_config" ]; then
+                    docker logout "$DOCKER_REGISTRY" >/dev/null 2>&1 || true
                     rm -rf -- "$expected_config"
+                fi
+
+                if [ -n "${IMAGE_TAG:-}" ]; then
+                    docker image rm "my-api-test:$IMAGE_TAG" >/dev/null 2>&1 || true
                 fi
             '''
         }
