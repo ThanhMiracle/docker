@@ -173,7 +173,7 @@ deploys the production Compose files to one Azure Linux VM using SSH.
 
 Create these Jenkins credentials:
 
-- `dockerhub-credentials`: Docker Hub username and access token.
+- `dockerhub-cred`: Docker Hub username and access token.
 - `azure-vm-ssh`: SSH private key authorized for the Azure VM.
 
 Before the first deployment, install Docker Compose on the VM and create

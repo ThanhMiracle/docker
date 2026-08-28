@@ -16,7 +16,7 @@ pipeline {
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute application directory on the VM')
         string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public app URL, e.g. https://shop.example.com')
         string(name: 'AZURE_SSH_CREDENTIAL_ID', defaultValue: 'azure-vm-ssh', description: 'Jenkins SSH private-key credential ID')
-        string(name: 'DOCKERHUB_CREDENTIAL_ID', defaultValue: 'dockerhub-credentials', description: 'Jenkins Docker Hub credential ID')
+        string(name: 'DOCKERHUB_CREDENTIAL_ID', defaultValue: 'dockerhub-cred', description: 'Jenkins Docker Hub credential ID')
         string(name: 'FRONTEND_IMAGE', defaultValue: 'thanh2909/my-frontend', description: 'Frontend Docker Hub repository')
         string(name: 'API_IMAGE', defaultValue: 'thanh2909/my-api', description: 'API Docker Hub repository')
     }
@@ -80,8 +80,8 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    docker build --tag ${FRONTEND_IMAGE}:${IMAGE_TAG} --tag ${FRONTEND_IMAGE}:latest ./frontend
-                    docker build --tag ${API_IMAGE}:${IMAGE_TAG} --tag ${API_IMAGE}:latest ./backend
+                    docker build --tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ./frontend
+                    docker build --tag ${API_IMAGE}:${IMAGE_TAG} ./backend
                 '''
             }
         }
@@ -95,21 +95,17 @@ pipeline {
                     passwordVariable: 'DOCKERHUB_TOKEN'
                 )]) {
                     sh '''
+                        set -eu
                         set +x
                         printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" --username "$DOCKERHUB_USERNAME" --password-stdin
-                        set -x
-                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                        docker push ${API_IMAGE}:${IMAGE_TAG}
-                        docker push ${FRONTEND_IMAGE}:latest
-                        docker push ${API_IMAGE}:latest
+                        docker push "${FRONTEND_IMAGE}:${IMAGE_TAG}"
+                        docker push "${API_IMAGE}:${IMAGE_TAG}"
 
                         # The registry now has the release; remove local tags
                         # and their unreferenced layers from the Jenkins agent.
                         docker image rm \
-                          ${FRONTEND_IMAGE}:${IMAGE_TAG} \
-                          ${API_IMAGE}:${IMAGE_TAG} \
-                          ${FRONTEND_IMAGE}:latest \
-                          ${API_IMAGE}:latest || true
+                          "${FRONTEND_IMAGE}:${IMAGE_TAG}" \
+                          "${API_IMAGE}:${IMAGE_TAG}" || true
                     '''
                 }
             }
