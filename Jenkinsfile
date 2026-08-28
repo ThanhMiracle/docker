@@ -4,59 +4,73 @@ pipeline {
     options {
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
+        skipDefaultCheckout(false)
     }
 
     parameters {
-        string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Public DNS name or IP address of the Azure Linux VM')
-        string(name: 'AZURE_VM_USER', defaultValue: 'azureuser', description: 'SSH user on the Azure Linux VM')
-        string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute application directory on the Azure VM')
-        string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public HTTPS URL, for example https://shop.example.com')
-        string(name: 'AZURE_SSH_CREDENTIAL_ID', defaultValue: 'azure-vm-ssh', description: 'Jenkins SSH private-key credential ID for the Azure VM')
-        string(name: 'DOCKERHUB_CREDENTIAL_ID', defaultValue: 'dockerhub-credentials', description: 'Jenkins Docker Hub username/password credential ID')
-        string(name: 'FRONTEND_IMAGE', defaultValue: 'thanh2909/my-frontend', description: 'Docker image repository for the frontend')
-        string(name: 'API_IMAGE', defaultValue: 'thanh2909/my-api', description: 'Docker image repository for the API')
+        booleanParam(name: 'DEPLOY_TO_AZURE', defaultValue: false, description: 'Push images and deploy to the Azure VM after tests pass')
+        string(name: 'RELEASE_TAG', defaultValue: '', description: 'Optional Docker tag; defaults to v<Jenkins build number>')
+        string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure Linux VM public DNS name or IP')
+        string(name: 'AZURE_VM_USER', defaultValue: 'azureuser', description: 'SSH user on the Azure VM')
+        string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute application directory on the VM')
+        string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public app URL, e.g. https://shop.example.com')
+        string(name: 'AZURE_SSH_CREDENTIAL_ID', defaultValue: 'azure-vm-ssh', description: 'Jenkins SSH private-key credential ID')
+        string(name: 'DOCKERHUB_CREDENTIAL_ID', defaultValue: 'dockerhub-credentials', description: 'Jenkins Docker Hub credential ID')
+        string(name: 'FRONTEND_IMAGE', defaultValue: 'thanh2909/my-frontend', description: 'Frontend Docker Hub repository')
+        string(name: 'API_IMAGE', defaultValue: 'thanh2909/my-api', description: 'API Docker Hub repository')
     }
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
-        IMAGE_TAG = "v${BUILD_NUMBER}"
     }
 
     stages {
-        stage('Verify tools') {
+        stage('Initialize') {
             steps {
+                script {
+                    env.IMAGE_TAG = params.RELEASE_TAG?.trim() ? params.RELEASE_TAG.trim() : "v${env.BUILD_NUMBER}"
+                }
                 sh '''
                     set -eu
                     command -v docker
                     command -v ssh
                     command -v scp
                     docker compose version
+                    echo "Release tag: ${IMAGE_TAG}"
                 '''
             }
         }
 
-        stage('Test') {
+        stage('Backend tests') {
             steps {
                 sh '''
                     set -eu
-                    docker build --target test --tag my-api-test:${BUILD_NUMBER} ./backend
+                    docker build --target test --tag my-api-test:${IMAGE_TAG} ./backend
                     docker run --rm \
                       -e DATABASE_URL=sqlite:////tmp/test.db \
                       -e JWT_SECRET=ci-only-secret \
                       -e JWT_EXPIRE_MINUTES=120 \
-                      -e ADMIN_EMAIL=admin@example.com \
+                      -e ADMIN_EMAIL=alice@example.com \
                       -e STORAGE_BACKEND=minio \
                       -e MINIO_BUCKET=ci-test-bucket \
                       -e MINIO_PUBLIC_URL=http://minio.invalid/uploads \
                       -e MINIO_ENDPOINT_URL=http://minio.invalid \
-                      my-api-test:${BUILD_NUMBER}
+                      my-api-test:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Frontend build') {
+            steps {
+                sh '''
+                    set -eu
                     docker build --target build ./frontend
                 '''
             }
         }
 
         stage('Build release images') {
-            when { branch 'main' }
+            when { expression { return params.DEPLOY_TO_AZURE } }
             steps {
                 sh '''
                     set -eu
@@ -66,8 +80,13 @@ pipeline {
             }
         }
 
-        stage('Push release images') {
-            when { branch 'main' }
+        stage('Push Docker Hub images') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression { return params.DEPLOY_TO_AZURE }
+                }
+            }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: "${params.DOCKERHUB_CREDENTIAL_ID}",
@@ -82,19 +101,23 @@ pipeline {
                         docker push ${API_IMAGE}:${IMAGE_TAG}
                         docker push ${FRONTEND_IMAGE}:latest
                         docker push ${API_IMAGE}:latest
-                        docker logout "$DOCKER_REGISTRY"
                     '''
                 }
             }
         }
 
-        stage('Deploy Azure VM') {
-            when { branch 'main' }
+        stage('Deploy to Azure VM') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression { return params.DEPLOY_TO_AZURE }
+                }
+            }
             steps {
                 withCredentials([sshUserPrivateKey(
                     credentialsId: "${params.AZURE_SSH_CREDENTIAL_ID}",
                     keyFileVariable: 'AZURE_SSH_KEY',
-                    usernameVariable: 'AZURE_CREDENTIAL_USER'
+                    usernameVariable: 'CREDENTIAL_VM_USER'
                 )]) {
                     sh '''
                         set -eu
@@ -102,11 +125,13 @@ pipeline {
                         test -n "$PUBLIC_BASE_URL"
                         ./scripts/deploy-azure-vm.sh \
                           "$AZURE_VM_HOST" \
-                          "${AZURE_VM_USER:-$AZURE_CREDENTIAL_USER}" \
+                          "${AZURE_VM_USER:-$CREDENTIAL_VM_USER}" \
                           "$AZURE_SSH_KEY" \
                           "$DEPLOY_PATH" \
                           "$IMAGE_TAG" \
-                          "$PUBLIC_BASE_URL"
+                          "$PUBLIC_BASE_URL" \
+                          "$FRONTEND_IMAGE" \
+                          "$API_IMAGE"
                     '''
                 }
             }
@@ -115,7 +140,10 @@ pipeline {
 
     post {
         always {
-            sh 'docker logout "$DOCKER_REGISTRY" || true; docker image prune -f || true'
+            sh '''
+                docker logout "$DOCKER_REGISTRY" >/dev/null 2>&1 || true
+                docker image prune -f >/dev/null 2>&1 || true
+            '''
         }
     }
 }

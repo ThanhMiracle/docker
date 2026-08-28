@@ -7,6 +7,8 @@ SSH_KEY="${3:-}"
 DEPLOY_PATH="${4:-/opt/my-app}"
 IMAGE_TAG="${5:-}"
 PUBLIC_BASE_URL="${6:-}"
+FRONTEND_IMAGE="${7:-thanh2909/my-frontend}"
+API_IMAGE="${8:-thanh2909/my-api}"
 
 for name in AZURE_VM_HOST AZURE_VM_USER SSH_KEY IMAGE_TAG PUBLIC_BASE_URL; do
   if [ -z "${!name}" ]; then
@@ -29,11 +31,13 @@ scp "${SSH_OPTIONS[@]}" scripts/health-monitor.sh scripts/backup-postgres.sh \
   "$TARGET:$DEPLOY_PATH/scripts/"
 
 ssh "${SSH_OPTIONS[@]}" "$TARGET" /bin/bash -s -- \
-  "$DEPLOY_PATH" "$IMAGE_TAG" "${PUBLIC_BASE_URL%/}" <<'REMOTE'
+  "$DEPLOY_PATH" "$IMAGE_TAG" "${PUBLIC_BASE_URL%/}" "$FRONTEND_IMAGE" "$API_IMAGE" <<'REMOTE'
 set -euo pipefail
 deploy_path="$1"
 image_tag="$2"
 public_base_url="$3"
+frontend_image="$4"
+api_image="$5"
 env_file="$deploy_path/.env"
 
 if [ ! -f "$env_file" ]; then
@@ -42,8 +46,9 @@ if [ ! -f "$env_file" ]; then
 fi
 
 chmod 600 "$env_file"
-sed -i '/^API_BASE=/d;/^FRONTEND_BASE_URL=/d' "$env_file"
-printf 'API_BASE=%s/api\nFRONTEND_BASE_URL=%s\n' "$public_base_url" "$public_base_url" >> "$env_file"
+sed -i '/^API_BASE=/d;/^FRONTEND_BASE_URL=/d;/^FRONTEND_IMAGE=/d;/^API_IMAGE=/d' "$env_file"
+printf 'API_BASE=%s/api\nFRONTEND_BASE_URL=%s\nFRONTEND_IMAGE=%s\nAPI_IMAGE=%s\n' \
+  "$public_base_url" "$public_base_url" "$frontend_image" "$api_image" >> "$env_file"
 chmod 755 "$deploy_path/scripts/health-monitor.sh" "$deploy_path/scripts/backup-postgres.sh"
 
 cd "$deploy_path"
@@ -52,4 +57,18 @@ docker compose --env-file .env -f docker-compose.prod.yml config --quiet
 docker compose --env-file .env -f docker-compose.prod.yml pull
 docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans
 docker compose --env-file .env -f docker-compose.prod.yml ps
+
+for attempt in $(seq 1 12); do
+  if docker compose --env-file .env -f docker-compose.prod.yml exec -T api \
+    python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" \
+    && docker compose --env-file .env -f docker-compose.prod.yml exec -T nginx \
+      wget -q -O /dev/null http://localhost/; then
+    echo "Deployment health checks passed."
+    exit 0
+  fi
+  sleep 5
+done
+
+echo "Deployment health checks failed." >&2
+exit 1
 REMOTE
