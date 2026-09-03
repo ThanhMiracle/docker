@@ -175,12 +175,18 @@ Create these Jenkins credentials:
 
 - `dockerhub-cred`: Docker Hub username and access token.
 - `azure-vm-ssh`: SSH private key authorized for the Azure VM.
+- `azure-vm-known-hosts`: Secret file containing the Azure VM's verified SSH host key.
 
 Before the first deployment, install Docker Compose on the VM and create
 `/opt/my-app/.env` with the real production values. Keep it mode `600`; use
 Azure Key Vault to provision or rotate its secrets. Jenkins does not copy
 secrets to the VM.
 
-Set `AZURE_VM_HOST`, `AZURE_VM_USER`, `PUBLIC_BASE_URL`, and the credential IDs
-in the Jenkins build parameters. The real `.env` is intentionally ignored by
-Git. Never commit it.
+Set `AZURE_VM_HOST`, `DEPLOY_PATH`, and `PUBLIC_BASE_URL` in the Jenkins build
+parameters. The SSH username comes from `azure-vm-ssh`. The real `.env` is
+intentionally ignored by Git. Never commit it.
+
+Obtain the VM host key from a trusted source (for example, the VM console or
+your provisioning output), save it in OpenSSH `known_hosts` format, and upload
+that file to Jenkins as a Secret file with ID `azure-vm-known-hosts`. Do not
+build this file from an unverified `ssh-keyscan` result inside the pipeline.
