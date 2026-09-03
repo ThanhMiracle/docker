@@ -85,18 +85,24 @@ pipeline {
                 )]) {
                     sh '''
                         set -eu
+
                         test -f "$WORKSPACE/sonar-project.properties" || {
-                          echo "sonar-project.properties is missing from the Jenkins checkout" >&2
-                          exit 1
+                        echo "sonar-project.properties is missing from the Jenkins checkout" >&2
+                        exit 1
                         }
+
                         case "$SONAR_HOST_URL" in
-                          http://*|https://*) ;;
-                          *) echo "SONAR_HOST_URL must begin with http:// or https://" >&2; exit 1 ;;
+                        http://*|https://*) ;;
+                        *)
+                            echo "SONAR_HOST_URL must begin with http:// or https://" >&2
+                            exit 1
+                            ;;
                         esac
 
-                        # Keep the SonarScanner cache/temp files in the writable Jenkins workspace.
+                        export SONAR_USER_HOME="$WORKSPACE/.sonar"
                         mkdir -p "$SONAR_USER_HOME"
-                        chmod u+rwx "$SONAR_USER_HOME"
+
+                        echo "SONAR_USER_HOME=$SONAR_USER_HOME"
 
                         sonar-scan
                     '''
