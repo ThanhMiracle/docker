@@ -10,7 +10,7 @@ pipeline {
 
     parameters {
         choice(name: 'COMPONENT', choices: ['all', 'backend', 'frontend'], description: 'Component to build and push')
-        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Optional Docker image tag; blank builds and scans without pushing or deploying')
         string(name: 'SONAR_HOST_URL', defaultValue: 'http://sonarqube:9000', description: 'SonarQube URL on the Docker Compose network')
         string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure VM public IP address or DNS name')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute deployment directory on the Azure VM')
@@ -35,8 +35,10 @@ pipeline {
         stage('Initialize') {
             steps {
                 script {
-                    env.RELEASE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
-                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.COMPONENT} ${env.RELEASE_TAG}"
+                    env.RELEASE_TAG = params.IMAGE_TAG?.trim() ?: ''
+                    currentBuild.displayName = env.RELEASE_TAG \
+                        ? "#${env.BUILD_NUMBER} ${params.COMPONENT} ${env.RELEASE_TAG}" \
+                        : "#${env.BUILD_NUMBER} ${params.COMPONENT} untagged"
 
                     // Isolate this build from stale credentials on the agent.
                     env.DOCKER_CONFIG = "${env.WORKSPACE}/.docker-ci-${env.BUILD_NUMBER}"
@@ -47,7 +49,8 @@ pipeline {
                     docker version >/dev/null
 
                     case "$RELEASE_TAG" in
-                      ''|*[!A-Za-z0-9_.-]*)
+                      '') ;;
+                      *[!A-Za-z0-9_.-]*)
                         echo "Invalid image tag: $RELEASE_TAG" >&2
                         exit 1
                         ;;
@@ -59,8 +62,16 @@ pipeline {
 
                     mkdir -p "$DOCKER_CONFIG"
                     chmod 700 "$DOCKER_CONFIG"
+                    rm -f -- \
+                      "$WORKSPACE/.api-test-image-id" \
+                      "$WORKSPACE/.api-image-id" \
+                      "$WORKSPACE/.frontend-image-id"
                     echo "Building component: $COMPONENT"
-                    echo "Building release: $RELEASE_TAG"
+                    if [ -n "$RELEASE_TAG" ]; then
+                      echo "Building release: $RELEASE_TAG"
+                    else
+                      echo "No image tag supplied; push and deployment will be skipped"
+                    fi
                 '''
             }
         }
@@ -100,7 +111,7 @@ pipeline {
                     docker build \
                       --pull \
                       --target test \
-                      --tag "my-api-test:$RELEASE_TAG" \
+                      --iidfile "$WORKSPACE/.api-test-image-id" \
                       ./backend
 
                     docker run --rm \
@@ -112,7 +123,7 @@ pipeline {
                       -e MINIO_BUCKET=ci-test-bucket \
                       -e MINIO_PUBLIC_URL=http://minio.invalid/uploads \
                       -e MINIO_ENDPOINT_URL=http://minio.invalid \
-                      "my-api-test:$RELEASE_TAG"
+                      "$(cat "$WORKSPACE/.api-test-image-id")"
                 '''
             }
         }
@@ -126,11 +137,14 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    docker build \
+                    set -- docker build \
                       --pull \
                       --target runtime \
-                      --tag "$API_IMAGE:$RELEASE_TAG" \
-                      ./backend
+                      --iidfile "$WORKSPACE/.api-image-id"
+                    if [ -n "$RELEASE_TAG" ]; then
+                      set -- "$@" --tag "$API_IMAGE:$RELEASE_TAG"
+                    fi
+                    "$@" ./backend
                 '''
             }
         }
@@ -144,11 +158,14 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    docker build \
+                    set -- docker build \
                       --pull \
                       --target runtime \
-                      --tag "$FRONTEND_IMAGE:$RELEASE_TAG" \
-                      ./frontend
+                      --iidfile "$WORKSPACE/.frontend-image-id"
+                    if [ -n "$RELEASE_TAG" ]; then
+                      set -- "$@" --tag "$FRONTEND_IMAGE:$RELEASE_TAG"
+                    fi
+                    "$@" ./frontend
                 '''
             }
         }
@@ -169,7 +186,7 @@ pipeline {
                       --exit-code 1 \
                       --ignore-unfixed \
                       --severity HIGH,CRITICAL \
-                      "$API_IMAGE:$RELEASE_TAG"
+                      "$(cat "$WORKSPACE/.api-image-id")"
                 '''
             }
         }
@@ -190,7 +207,7 @@ pipeline {
                       --exit-code 1 \
                       --ignore-unfixed \
                       --severity HIGH,CRITICAL \
-                      "$FRONTEND_IMAGE:$RELEASE_TAG"
+                      "$(cat "$WORKSPACE/.frontend-image-id")"
                 '''
             }
         }
@@ -199,6 +216,9 @@ pipeline {
             when {
                 allOf {
                     branch 'main'
+                    expression {
+                        params.IMAGE_TAG?.trim()
+                    }
                     expression {
                         params.COMPONENT == 'all' || params.COMPONENT == 'backend'
                     }
@@ -230,6 +250,9 @@ pipeline {
                 allOf {
                     branch 'main'
                     expression {
+                        params.IMAGE_TAG?.trim()
+                    }
+                    expression {
                         params.COMPONENT == 'all' || params.COMPONENT == 'frontend'
                     }
                 }
@@ -259,6 +282,9 @@ pipeline {
             when {
                 allOf {
                     branch 'main'
+                    expression {
+                        params.IMAGE_TAG?.trim()
+                    }
                     expression {
                         params.COMPONENT == 'all'
                     }
@@ -339,11 +365,20 @@ pipeline {
 
                 if [ -n "${RELEASE_TAG:-}" ]; then
                     docker image rm \
-                      "my-api-test:$RELEASE_TAG" \
                       "$API_IMAGE:$RELEASE_TAG" \
                       "$FRONTEND_IMAGE:$RELEASE_TAG" \
                       >/dev/null 2>&1 || true
                 fi
+
+                for image_id_file in \
+                  "$WORKSPACE/.api-test-image-id" \
+                  "$WORKSPACE/.api-image-id" \
+                  "$WORKSPACE/.frontend-image-id"; do
+                    if [ -s "$image_id_file" ]; then
+                        docker image rm "$(cat "$image_id_file")" >/dev/null 2>&1 || true
+                        rm -f -- "$image_id_file"
+                    fi
+                done
             '''
         }
     }
