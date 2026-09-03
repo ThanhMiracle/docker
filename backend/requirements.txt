@@ -11,3 +11,6 @@ azure-storage-blob
 boto3
 httpx
 pytest
+
+# Security constraints
+msgpack>=1.2.1
