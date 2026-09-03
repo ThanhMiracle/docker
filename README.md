@@ -212,8 +212,8 @@ the same machine, `localhost` inside the scanner container is not the host;
 use a resolvable container name, host gateway, private IP, or DNS name.
 
 The SonarScanner configuration is in `sonar-project.properties`. Analysis runs
-on `main` and waits for the SonarQube quality gate, so a failed gate blocks the
-image build and deployment.
+on every branch and waits for the SonarQube quality gate, so a failed gate
+blocks the image build and any later push or deployment.
 
 Trivy uses the pinned official scanner container and scans each selected image
 after it is built. Fixable HIGH or CRITICAL vulnerabilities fail the pipeline

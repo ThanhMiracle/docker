@@ -66,9 +66,6 @@ pipeline {
         }
 
         stage('SonarQube analysis') {
-            when {
-                branch 'main'
-            }
             steps {
                 withCredentials([string(
                     credentialsId: 'sonarqube-token',
