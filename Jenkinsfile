@@ -9,6 +9,7 @@ pipeline {
     }
 
     parameters {
+        choice(name: 'COMPONENT', choices: ['all', 'backend', 'frontend'], description: 'Component to build and push')
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
         string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure VM public IP address or DNS name')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute deployment directory on the Azure VM')
@@ -32,7 +33,7 @@ pipeline {
             steps {
                 script {
                     env.RELEASE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
-                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${env.RELEASE_TAG}"
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.COMPONENT} ${env.RELEASE_TAG}"
 
                     // Isolate this build from stale credentials on the agent.
                     env.DOCKER_CONFIG = "${env.WORKSPACE}/.docker-ci-${env.BUILD_NUMBER}"
@@ -55,12 +56,18 @@ pipeline {
 
                     mkdir -p "$DOCKER_CONFIG"
                     chmod 700 "$DOCKER_CONFIG"
+                    echo "Building component: $COMPONENT"
                     echo "Building release: $RELEASE_TAG"
                 '''
             }
         }
 
         stage('Test backend') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'backend'
+                }
+            }
             steps {
                 sh '''
                     set -eu
@@ -84,7 +91,12 @@ pipeline {
             }
         }
 
-        stage('Build images') {
+        stage('Build backend') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'backend'
+                }
+            }
             steps {
                 sh '''
                     set -eu
@@ -93,7 +105,19 @@ pipeline {
                       --target runtime \
                       --tag "$API_IMAGE:$RELEASE_TAG" \
                       ./backend
+                '''
+            }
+        }
 
+        stage('Build frontend') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'frontend'
+                }
+            }
+            steps {
+                sh '''
+                    set -eu
                     docker build \
                       --pull \
                       --target runtime \
@@ -103,9 +127,14 @@ pipeline {
             }
         }
 
-        stage('Push images') {
+        stage('Push backend') {
             when {
-                branch 'main'
+                allOf {
+                    branch 'main'
+                    expression {
+                        params.COMPONENT == 'all' || params.COMPONENT == 'backend'
+                    }
+                }
             }
             steps {
                 withCredentials([usernamePassword(
@@ -122,6 +151,35 @@ pipeline {
                               --password-stdin
 
                             docker push "$API_IMAGE:$RELEASE_TAG"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Push frontend') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression {
+                        params.COMPONENT == 'all' || params.COMPONENT == 'frontend'
+                    }
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-cred',
+                    usernameVariable: 'DOCKERHUB_USERNAME',
+                    passwordVariable: 'DOCKERHUB_TOKEN'
+                )]) {
+                    retry(2) {
+                        sh '''
+                            set -eu
+                            set +x
+                            printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" \
+                              --username "$DOCKERHUB_USERNAME" \
+                              --password-stdin
+
                             docker push "$FRONTEND_IMAGE:$RELEASE_TAG"
                         '''
                     }
@@ -131,7 +189,12 @@ pipeline {
 
         stage('Deploy to Azure VM') {
             when {
-                branch 'main'
+                allOf {
+                    branch 'main'
+                    expression {
+                        params.COMPONENT == 'all'
+                    }
+                }
             }
             steps {
                 withCredentials([

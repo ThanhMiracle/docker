@@ -186,6 +186,16 @@ Set `AZURE_VM_HOST`, `DEPLOY_PATH`, and `PUBLIC_BASE_URL` in the Jenkins build
 parameters. The SSH username comes from `azure-vm-ssh`. The real `.env` is
 intentionally ignored by Git. Never commit it.
 
+Use the `COMPONENT` build parameter to select the pipeline scope:
+
+- `backend`: test, build, and push only the API image.
+- `frontend`: build and push only the frontend image.
+- `all`: build and push both images, then deploy them together from `main`.
+
+Push stages run only on `main`. Deployment also requires `COMPONENT=all`, which
+prevents Compose from deploying two services with a tag built for only one of
+them.
+
 Obtain the VM host key from a trusted source (for example, the VM console or
 your provisioning output), save it in OpenSSH `known_hosts` format, and upload
 that file to Jenkins as a Secret file with ID `azure-vm-known-hosts`. Do not
