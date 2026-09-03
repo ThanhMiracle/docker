@@ -11,7 +11,7 @@ pipeline {
     parameters {
         choice(name: 'COMPONENT', choices: ['all', 'backend', 'frontend'], description: 'Component to build and push')
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
-        string(name: 'SONAR_HOST_URL', defaultValue: 'http://host.docker.internal:9000', description: 'SonarQube URL reachable from the scanner container')
+        string(name: 'SONAR_HOST_URL', defaultValue: 'http://sonarqube:9000', description: 'SonarQube URL on the Docker Compose network')
         string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure VM public IP address or DNS name')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute deployment directory on the Azure VM')
         string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public URL, for example https://shop.example.com')
@@ -82,19 +82,7 @@ pipeline {
                           *) echo "SONAR_HOST_URL must begin with http:// or https://" >&2; exit 1 ;;
                         esac
 
-                        scanner_container="$(docker create \
-                          --user "$(id -u):$(id -g)" \
-                          --add-host host.docker.internal:host-gateway \
-                          -e SONAR_HOST_URL \
-                          -e SONAR_TOKEN \
-                          -e SONAR_USER_HOME=/tmp/.sonar \
-                          "$SONAR_SCANNER_IMAGE")"
-                        trap 'docker rm -f "$scanner_container" >/dev/null 2>&1 || true' EXIT
-
-                        # docker cp works when Jenkins is containerized and uses
-                        # the host Docker socket; a workspace bind mount may not.
-                        docker cp --archive "$WORKSPACE/." "$scanner_container:/usr/src"
-                        docker start --attach "$scanner_container"
+                        sonar-scan
                     '''
                 }
             }
