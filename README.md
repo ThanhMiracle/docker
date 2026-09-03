@@ -212,6 +212,11 @@ reachable from a Docker container on the Jenkins agent. The default,
 Linux Docker host; the pipeline supplies Docker's `host-gateway` mapping. A
 resolvable private IP or DNS name can be used instead.
 
+The scanner workspace is transferred with `docker cp` rather than a bind mount.
+This is intentional: when Jenkins itself is containerized and uses the host
+Docker socket, a path such as `/var/jenkins_home/workspace/...` exists in the
+Jenkins container but may not exist at the same path on the Docker host.
+
 The SonarScanner configuration is in `sonar-project.properties`. Analysis runs
 on every branch and waits for the SonarQube quality gate, so a failed gate
 blocks the image build and any later push or deployment.

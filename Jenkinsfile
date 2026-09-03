@@ -82,14 +82,19 @@ pipeline {
                           *) echo "SONAR_HOST_URL must begin with http:// or https://" >&2; exit 1 ;;
                         esac
 
-                        docker run --rm \
+                        scanner_container="$(docker create \
                           --user "$(id -u):$(id -g)" \
                           --add-host host.docker.internal:host-gateway \
                           -e SONAR_HOST_URL \
                           -e SONAR_TOKEN \
                           -e SONAR_USER_HOME=/tmp/.sonar \
-                          -v "$WORKSPACE:/usr/src" \
-                          "$SONAR_SCANNER_IMAGE"
+                          "$SONAR_SCANNER_IMAGE")"
+                        trap 'docker rm -f "$scanner_container" >/dev/null 2>&1 || true' EXIT
+
+                        # docker cp works when Jenkins is containerized and uses
+                        # the host Docker socket; a workspace bind mount may not.
+                        docker cp --archive "$WORKSPACE/." "$scanner_container:/usr/src"
+                        docker start --attach "$scanner_container"
                     '''
                 }
             }
