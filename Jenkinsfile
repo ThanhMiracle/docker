@@ -22,6 +22,7 @@ pipeline {
         FRONTEND_IMAGE = 'thanh2909/my-frontend'
         API_IMAGE = 'thanh2909/my-api'
         SONAR_SCANNER_IMAGE = 'sonarsource/sonar-scanner-cli:12.1.0.3233_8.0.1'
+        SONAR_USER_HOME = "${WORKSPACE}/.sonar"
         TRIVY_IMAGE = 'aquasec/trivy:0.74.0'
     }
 
@@ -92,6 +93,10 @@ pipeline {
                           http://*|https://*) ;;
                           *) echo "SONAR_HOST_URL must begin with http:// or https://" >&2; exit 1 ;;
                         esac
+
+                        # Keep the SonarScanner cache/temp files in the writable Jenkins workspace.
+                        mkdir -p "$SONAR_USER_HOME"
+                        chmod u+rwx "$SONAR_USER_HOME"
 
                         sonar-scan
                     '''
