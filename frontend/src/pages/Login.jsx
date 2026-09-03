@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { apiUrl } from '../api'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -29,14 +30,13 @@ function getApiBase() {
 
 
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const nav = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const login = async () => {
     const form = new URLSearchParams({ username: email, password })
@@ -62,6 +62,7 @@ export default function Login() {
       <section className="auth-card">
       <p className="eyebrow">Welcome back</p>
       <h1>Good to see you.</h1>
+      {searchParams.get('reason') === 'inactive' && <div className="notice">You were logged out after 10 minutes of inactivity.</div>}
       <p>Sign in to continue shopping and manage your orders.</p>
       <div className="form-stack">
         <input

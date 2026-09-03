@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { apiUrl } from '../api'
 
 // Lấy API_BASE runtime (docker) > build-time (vite) > fallback
 function getApiBase() {
@@ -30,9 +31,7 @@ function getApiBase() {
 
 // Chuẩn hoá để đảm bảo có protocol
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function Edit() {
   const { id } = useParams()
@@ -40,8 +39,13 @@ export default function Edit() {
 
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
-  const [image_url, setImageUrl] = useState('')
+  const [stock, setStock] = useState('0')
+  const [images, setImages] = useState([])
+  const [newFiles, setNewFiles] = useState([])
+  const [imageUrl, setImageUrl] = useState('')
   const [description, setDescription] = useState('')
+  const [message, setMessage] = useState('')
+  const [saving, setSaving] = useState(false)
 
   // load product data ban đầu
   useEffect(() => {
@@ -51,7 +55,8 @@ export default function Edit() {
         const p = await res.json()
         setName(p.name)
         setPrice(p.price)
-        setImageUrl(p.image_url || '')
+        setStock(String(p.stock ?? 0))
+        setImages(p.images?.length ? p.images : (p.image_url ? [p.image_url] : []))
         setDescription(p.description || '')
       } else {
         console.error('Failed to fetch product', res.status)
@@ -68,30 +73,57 @@ export default function Edit() {
       return
     }
 
-    const body = {
+    setSaving(true)
+    setMessage('')
+    try {
+      const uploadedImages = []
+      for (const file of newFiles) {
+        const form = new FormData()
+        form.append('file', file)
+        const upload = await fetch(`${API}/files/upload`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form
+        })
+        if (!upload.ok) throw new Error((await upload.json().catch(() => null))?.detail || `Could not upload ${file.name}`)
+        uploadedImages.push((await upload.json()).url)
+      }
+
+      const allImages = [...images, ...uploadedImages]
+      const body = {
       name,
       price: Number(price),
-      image_url,
+      stock: Number(stock),
+      image_url: allImages[0] || null,
+      images: allImages,
       description
-    }
+      }
 
-    const res = await fetch(`${API}/products/${id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(body)
-    })
+      const res = await fetch(`${API}/products/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(body)
+      })
 
-    if (res.ok) {
-      alert('Updated!')
-      nav('/')
-    } else if (res.status === 403) {
-      alert('Forbidden: only owner can edit')
-    } else {
-      alert(await res.text())
+      if (res.ok) {
+        nav('/')
+      } else if (res.status === 403) {
+        setMessage('Forbidden: only an admin can edit products.')
+      } else {
+        setMessage((await res.json().catch(() => null))?.detail || 'Could not update product.')
+      }
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setSaving(false)
     }
+  }
+
+  const addImageUrl = () => {
+    const url = imageUrl.trim()
+    if (url && !images.includes(url)) setImages(current => [...current, url])
+    setImageUrl('')
   }
 
   const del = async () => {
@@ -125,12 +157,14 @@ export default function Edit() {
       <section className="form-card">
       <p className="eyebrow">Admin studio</p>
       <h1>Edit product</h1>
+      {message && <div className="notice">{message}</div>}
       <form onSubmit={save} className="form-stack">
         <input
           placeholder="Name"
           value={name}
           onChange={e => setName(e.target.value)}
         />
+        <input placeholder="Stock quantity" type="number" min="0" value={stock} onChange={e => setStock(e.target.value)} />
         <input
           placeholder="Price"
           type="number"
@@ -138,18 +172,21 @@ export default function Edit() {
           value={price}
           onChange={e => setPrice(e.target.value)}
         />
-        <input
-          placeholder="Image URL"
-          value={image_url}
-          onChange={e => setImageUrl(e.target.value)}
-        />
+        <div className="image-editor">
+          <label>Product images</label>
+          <p className="muted">The first image is the main product image. Remove and add images to replace it.</p>
+          {images.length > 0 && <div className="image-editor-grid">{images.map((image, index) => <figure key={image}><img src={image} alt={`Product image ${index + 1}`} /><figcaption>{index === 0 ? 'Main image' : `Image ${index + 1}`}<button type="button" onClick={() => setImages(current => current.filter(value => value !== image))}>Remove</button></figcaption></figure>)}</div>}
+          <input type="file" accept="image/*" multiple onChange={e => setNewFiles([...e.target.files])} />
+          {newFiles.length > 0 && <small>{newFiles.length} new image{newFiles.length === 1 ? '' : 's'} will be uploaded when you save.</small>}
+          <div className="image-url-row"><input placeholder="Add image URL" value={imageUrl} onChange={e => setImageUrl(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addImageUrl() } }} /><button type="button" onClick={addImageUrl}>Add URL</button></div>
+        </div>
         <textarea
           placeholder="Description"
           value={description}
           onChange={e => setDescription(e.target.value)}
         />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="submit">Save</button>
+          <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
           <button
             type="button"
             onClick={del}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { apiUrl } from '../api'
 
 function getApiBase() {
   if (typeof window !== 'undefined' && window.__ENV__?.API_BASE?.trim()) return window.__ENV__.API_BASE
@@ -8,7 +9,7 @@ function getApiBase() {
 }
 
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://') ? API_BASE : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function Cart() {
   const [cart, setCart] = useState({ items: [], total: 0 })
@@ -40,6 +41,13 @@ export default function Cart() {
     }
     try {
       setCart(await request('/cart'))
+      const profile = await request('/profile')
+      setCheckoutDetails(current => ({
+        ...current,
+        customer_name: current.customer_name || profile.name || '',
+        phone: current.phone || profile.phone || '',
+        delivery_address: current.delivery_address || profile.delivery_address || ''
+      }))
     } catch (error) {
       setMessage(error.message)
     } finally {
@@ -49,10 +57,11 @@ export default function Cart() {
 
   useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const changeQuantity = async (productId, quantity) => {
+  const changeQuantity = async (productId, quantity, selectedColor) => {
     try {
-      if (quantity < 1) setCart(await request(`/cart/items/${productId}`, { method: 'DELETE' }))
-      else setCart(await request(`/cart/items/${productId}`, { method: 'PUT', body: JSON.stringify({ quantity }) }))
+      const color = selectedColor ? `?selected_color=${encodeURIComponent(selectedColor)}` : ''
+      if (quantity < 1) setCart(await request(`/cart/items/${productId}${color}`, { method: 'DELETE' }))
+      else setCart(await request(`/cart/items/${productId}`, { method: 'PUT', body: JSON.stringify({ quantity, selected_color: selectedColor || null }) }))
     } catch (error) { setMessage(error.message) }
   }
 
@@ -100,14 +109,15 @@ export default function Cart() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600 }}>{item.product.name}</div>
                   <div>${Number(item.product.price).toFixed(2)} each</div>
+                  {item.selected_color && <div>Colour: {item.selected_color}</div>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button onClick={() => changeQuantity(item.product_id, item.quantity - 1)}>−</button>
+                  <button onClick={() => changeQuantity(item.product_id, item.quantity - 1, item.selected_color)}>−</button>
                   <span>{item.quantity}</span>
-                  <button onClick={() => changeQuantity(item.product_id, item.quantity + 1)}>+</button>
+                  <button onClick={() => changeQuantity(item.product_id, item.quantity + 1, item.selected_color)}>+</button>
                 </div>
                 <strong>${(item.product.price * item.quantity).toFixed(2)}</strong>
-                <button onClick={() => changeQuantity(item.product_id, 0)}>Remove</button>
+                <button onClick={() => changeQuantity(item.product_id, 0, item.selected_color)}>Remove</button>
               </div>
             ))}
           </div>

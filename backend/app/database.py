@@ -1,3 +1,4 @@
+import json
 import os
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -84,6 +85,90 @@ def migrate_order_confirmation_fields():
             if name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
 
+def migrate_order_cancellation_fields():
+    """Add the cancellation timestamp used to expire cancelled orders."""
+    inspector = inspect(engine)
+    if "orders" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("orders")}
+    if "cancelled_at" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE orders ADD COLUMN cancelled_at TIMESTAMP WITH TIME ZONE"
+            ))
+
+def migrate_product_variant_fields():
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    additions = {
+        "products": {"image_urls_json": "TEXT", "colors_json": "TEXT"},
+        "cart_items": {"selected_color": "VARCHAR(80)"},
+        "order_items": {"selected_color": "VARCHAR(80)"},
+    }
+    with engine.begin() as connection:
+        for table, columns in additions.items():
+            if table not in tables:
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table)}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+
+def migrate_product_inventory_fields():
+    inspector = inspect(engine)
+    if "products" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("products")}
+    if "stock" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0"
+            ))
+
+def migrate_chat_message_fields():
+    """Add attachment and read-state fields to existing support chats."""
+    inspector = inspect(engine)
+    if "chat_messages" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("chat_messages")}
+    required_columns = {
+        "attachment_url": "VARCHAR(2048)",
+        "read_at": "TIMESTAMP WITH TIME ZONE",
+    }
+    with engine.begin() as connection:
+        for name, definition in required_columns.items():
+            if name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE chat_messages ADD COLUMN {name} {definition}"))
+
+
+def migrate_legacy_minio_urls():
+    """Correct product image URLs created with the obsolete http://w hostname."""
+    public_url = os.getenv("MINIO_PUBLIC_URL", "").rstrip("/")
+    legacy_url = "http://w:9008/uploads"
+    if not public_url or public_url == legacy_url:
+        return
+
+    from . import models
+
+    db = SessionLocal()
+    try:
+        changed = False
+        for product in db.query(models.Product).filter(
+            models.Product.image_url.like(f"{legacy_url}/%")
+        ).all():
+            product.image_url = product.image_url.replace(legacy_url, public_url, 1)
+            if product.image_urls_json:
+                images = json.loads(product.image_urls_json)
+                product.image_urls_json = json.dumps([
+                    image.replace(legacy_url, public_url, 1) if image.startswith(legacy_url) else image
+                    for image in images
+                ])
+            changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
 def migrate_user_verification_fields():
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():
@@ -97,5 +182,25 @@ def migrate_user_verification_fields():
     }
     with engine.begin() as connection:
         for name, definition in required_columns.items():
+            if name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
+
+def migrate_user_profile_fields():
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "name" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE users ADD COLUMN name VARCHAR(120) NOT NULL DEFAULT ''"
+            ))
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    profile_columns = {
+        "phone": "VARCHAR(40)",
+        "delivery_address": "TEXT",
+    }
+    with engine.begin() as connection:
+        for name, definition in profile_columns.items():
             if name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))

@@ -21,8 +21,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # RUN sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list
 
 # Cài toolchain CHỈ KHI thật sự cần (ví dụ có libs biên dịch C)
-RUN --mount=type=cache,target=/var/cache/apt \
-    set -eux; \
+RUN set -eux; \
     apt-get update; \
     if [ "$NEED_BUILD_DEPS" = "1" ]; then \
       apt-get install -y --no-install-recommends build-essential; \
@@ -40,8 +39,7 @@ ENV PATH="$VENV_PATH/bin:$PATH"
 COPY requirements.txt .
 
 # Ưu tiên wheel thay vì biên dịch: nhanh hơn rất nhiều
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip \
+RUN pip install --upgrade pip \
  && pip install --only-binary=:all: --prefer-binary -r requirements.txt \
     || pip install -r requirements.txt
     # Nếu có package không có wheel, dòng đầu sẽ fail và dòng sau fallback cài thường

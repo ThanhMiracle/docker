@@ -1,11 +1,13 @@
 from typing import Optional
+import json
 from datetime import datetime, timedelta, timezone
 import secrets
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from . import models, security
 def create_user(
     db: Session,
+    name: str,
     email: str,
     password: str,
     is_admin: bool = False
@@ -22,6 +24,7 @@ def create_user(
         )
 
     user = models.User(
+        name=name.strip(),
         email=email,
         hashed_password=security.get_password_hash(password),
         is_admin=is_admin,
@@ -45,6 +48,13 @@ def get_user_by_email(db: Session, email: str):
         .filter(models.User.email == email)
         .first()
     )
+
+def update_user_profile(db: Session, user, data: dict):
+    user.phone = data["phone"].strip()
+    user.delivery_address = data["delivery_address"].strip()
+    db.commit()
+    db.refresh(user)
+    return user
 
 def verify_user_email(db: Session, token: str):
     user = (
@@ -78,14 +88,31 @@ def verify_user_email(db: Session, token: str):
     db.refresh(user)
 
     return user, None
+def _set_product_variants(product, data):
+    images = data.pop("images", None)
+    colors = data.pop("colors", None)
+    if images is not None:
+        product.image_urls_json = json.dumps(images)
+        product.image_url = images[0] if images else None
+    if colors is not None:
+        product.colors_json = json.dumps(colors)
+
 def create_product(db: Session, data: dict, owner_id: int):
-    p = models.Product(owner_id=owner_id, **data); db.add(p); db.commit(); db.refresh(p); return p
+    data = data.copy()
+    images = data.pop("images", None)
+    colors = data.pop("colors", None)
+    p = models.Product(owner_id=owner_id, **data)
+    data["images"] = images
+    data["colors"] = colors
+    _set_product_variants(p, data)
+    db.add(p); db.commit(); db.refresh(p); return p
 def get_product(db: Session, pid: int):
     return db.query(models.Product).filter(models.Product.id == pid).first()
 def update_product(db: Session, pid: int, data: dict, requester_id: int, admin: bool):
     p = get_product(db, pid)
     if not p: return None, "not_found"
     if (p.owner_id != requester_id) and (not admin): return None, "forbidden"
+    _set_product_variants(p, data)
     for k, v in data.items(): setattr(p, k, v)
     db.commit(); db.refresh(p); return p, None
 def delete_product(db: Session, pid: int, requester_id: int, admin: bool):
@@ -110,21 +137,44 @@ def list_my_products(db: Session, owner_id: int, skip: int=0, limit: int=12, q: 
 def get_cart_items(db: Session, user_id: int):
     return db.query(models.CartItem).filter(models.CartItem.user_id == user_id).all()
 
-def add_cart_item(db: Session, user_id: int, product_id: int, quantity: int):
+def available_stock_for_cart_item(db: Session, user_id: int, product_id: int, selected_color: str | None):
+    product = get_product(db, product_id)
+    reserved = db.query(func.coalesce(func.sum(models.CartItem.quantity), 0)).filter(
+        models.CartItem.user_id == user_id,
+        models.CartItem.product_id == product_id,
+    ).scalar()
+    return product.stock - reserved
+
+def can_set_cart_quantity(db: Session, user_id: int, product_id: int, selected_color: str | None, quantity: int):
+    product = get_product(db, product_id)
     item = db.query(models.CartItem).filter(
-        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id
+        models.CartItem.user_id == user_id,
+        models.CartItem.product_id == product_id,
+        models.CartItem.selected_color == selected_color,
+    ).first()
+    reserved = db.query(func.coalesce(func.sum(models.CartItem.quantity), 0)).filter(
+        models.CartItem.user_id == user_id,
+        models.CartItem.product_id == product_id,
+    ).scalar()
+    return product and quantity <= product.stock - reserved + (item.quantity if item else 0)
+
+def add_cart_item(db: Session, user_id: int, product_id: int, quantity: int, selected_color: str | None = None):
+    item = db.query(models.CartItem).filter(
+        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id,
+        models.CartItem.selected_color == selected_color
     ).first()
     if item:
         item.quantity += quantity
     else:
-        item = models.CartItem(user_id=user_id, product_id=product_id, quantity=quantity)
+        item = models.CartItem(user_id=user_id, product_id=product_id, quantity=quantity, selected_color=selected_color)
         db.add(item)
     db.commit(); db.refresh(item)
     return item
 
-def update_cart_item(db: Session, user_id: int, product_id: int, quantity: int):
+def update_cart_item(db: Session, user_id: int, product_id: int, quantity: int, selected_color: str | None = None):
     item = db.query(models.CartItem).filter(
-        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id
+        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id,
+        models.CartItem.selected_color == selected_color
     ).first()
     if not item:
         return None
@@ -132,9 +182,10 @@ def update_cart_item(db: Session, user_id: int, product_id: int, quantity: int):
     db.commit(); db.refresh(item)
     return item
 
-def remove_cart_item(db: Session, user_id: int, product_id: int):
+def remove_cart_item(db: Session, user_id: int, product_id: int, selected_color: str | None = None):
     item = db.query(models.CartItem).filter(
-        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id
+        models.CartItem.user_id == user_id, models.CartItem.product_id == product_id,
+        models.CartItem.selected_color == selected_color
     ).first()
     if not item:
         return False
@@ -155,7 +206,7 @@ def checkout_cart(db: Session, user_id: int, checkout: dict):
     for item in cart_items:
         db.add(models.OrderItem(
             order_id=order.id, product_id=item.product.id, product_name=item.product.name,
-            unit_price=item.product.price, quantity=item.quantity
+            unit_price=item.product.price, quantity=item.quantity, selected_color=item.selected_color
         ))
     db.commit(); db.refresh(order)
     return order
@@ -172,17 +223,210 @@ def confirm_order(db: Session, token: str):
     if expires_at < datetime.now(timezone.utc):
         return None, "expired"
 
+    required_quantities = {}
+    for order_item in order.items:
+        required_quantities[order_item.product_id] = (
+            required_quantities.get(order_item.product_id, 0) + order_item.quantity
+        )
+
+    products = {}
+    for product_id, required_quantity in required_quantities.items():
+        product = db.query(models.Product).filter(
+            models.Product.id == product_id
+        ).with_for_update().first()
+        if not product or product.stock < required_quantity:
+            return None, "out_of_stock"
+        products[product_id] = product
+
     for order_item in order.items:
         cart_item = db.query(models.CartItem).filter(
             models.CartItem.user_id == order.user_id,
             models.CartItem.product_id == order_item.product_id,
+            models.CartItem.selected_color == order_item.selected_color,
         ).first()
         if cart_item:
             if cart_item.quantity <= order_item.quantity:
                 db.delete(cart_item)
             else:
                 cart_item.quantity -= order_item.quantity
+    for product_id, required_quantity in required_quantities.items():
+        products[product_id].stock -= required_quantity
     order.status = "confirmed"
     order.confirmation_token = None
     db.commit(); db.refresh(order)
     return order, None
+
+
+def cancel_order(db: Session, order_id: int, user_id: int):
+    """Cancel an order owned by the current user.
+
+    Pending orders keep their cart unchanged; confirmed orders are not added
+    back to the cart automatically, which avoids overwriting later cart edits.
+    """
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.user_id == user_id,
+    ).first()
+
+    if not order:
+        return None, "not_found"
+    if order.status not in {"pending_confirmation", "confirmed"}:
+        return None, "cannot_cancel"
+
+    if order.status == "confirmed":
+        for order_item in order.items:
+            product = db.query(models.Product).filter(
+                models.Product.id == order_item.product_id
+            ).with_for_update().first()
+            if product:
+                product.stock += order_item.quantity
+
+    order.status = "cancelled"
+    order.cancelled_at = datetime.now(timezone.utc)
+    order.confirmation_token = None
+    order.confirmation_expires_at = None
+    db.commit()
+    db.refresh(order)
+    return order, None
+
+
+def update_order_delivery(db: Session, order_id: int, user_id: int, data: dict):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.user_id == user_id,
+    ).first()
+    if not order:
+        return None, "not_found"
+    if order.status not in {"pending_confirmation", "confirmed"}:
+        return None, "cannot_update"
+
+    order.phone = data["phone"]
+    order.delivery_address = data["delivery_address"]
+    db.commit()
+    db.refresh(order)
+    return order, None
+
+
+def update_order_status(db: Session, order_id: int, next_status: str):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        return None, "not_found"
+
+    allowed_transitions = {
+        "confirmed": "preparing",
+        "preparing": "shipping",
+        "shipping": "delivered",
+    }
+    if allowed_transitions.get(order.status) != next_status:
+        return None, "invalid_transition"
+
+    order.status = next_status
+    db.commit()
+    db.refresh(order)
+    return order, None
+
+
+def delete_expired_cancelled_orders(db: Session, user_id: int):
+    """Permanently remove a user's cancelled orders after five minutes."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+    expired_orders = db.query(models.Order).filter(
+        models.Order.user_id == user_id,
+        models.Order.status == "cancelled",
+        models.Order.cancelled_at <= cutoff,
+    ).all()
+
+    if not expired_orders:
+        return
+
+    # ORM deletion applies the Order.items relationship cascade, so dependent
+    # order items are removed before their parent order.
+    for order in expired_orders:
+        db.delete(order)
+    db.commit()
+
+
+def list_chat_messages(db: Session, user):
+    query = db.query(models.ChatMessage)
+    if not user.is_admin:
+        query = query.filter(models.ChatMessage.customer_id == user.id)
+    return query.order_by(models.ChatMessage.created_at.asc()).all()
+
+
+def create_chat_message(
+    db: Session, sender, body: str, customer_id: int | None = None,
+    attachment_url: str | None = None,
+):
+    # Customers always message their own support conversation. An admin may
+    # reply only to an existing customer's conversation.
+    target_customer_id = customer_id if sender.is_admin else sender.id
+    if sender.is_admin and not target_customer_id:
+        return None, "customer_required"
+    if sender.is_admin:
+        customer = db.query(models.User).filter(
+            models.User.id == target_customer_id,
+            models.User.is_admin.is_(False),
+        ).first()
+        if not customer:
+            return None, "customer_not_found"
+
+    message = models.ChatMessage(
+        sender_id=sender.id,
+        customer_id=target_customer_id,
+        body=body.strip(),
+        attachment_url=attachment_url,
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    return message, None
+
+
+def list_chat_conversations(db: Session):
+    """Return one inbox row per customer, ordered by latest activity."""
+    latest_by_customer = {}
+    for message in db.query(models.ChatMessage).order_by(
+        models.ChatMessage.created_at.desc()
+    ).all():
+        if message.customer_id not in latest_by_customer:
+            latest_by_customer[message.customer_id] = message
+
+    conversations = []
+    for customer_id, message in latest_by_customer.items():
+        customer = db.query(models.User).filter(models.User.id == customer_id).first()
+        if customer:
+            unread_count = db.query(models.ChatMessage).filter(
+                models.ChatMessage.customer_id == customer.id,
+                models.ChatMessage.sender_id == customer.id,
+                models.ChatMessage.read_at.is_(None),
+            ).count()
+            conversations.append({
+                "customer_id": customer.id,
+                "customer_email": customer.email,
+                "last_message": message.body,
+                "last_message_at": message.created_at,
+                "unread_count": unread_count,
+            })
+    return conversations
+
+
+def mark_chat_read(db: Session, user, customer_id: int | None = None):
+    target_customer_id = customer_id if user.is_admin else user.id
+    if user.is_admin and not target_customer_id:
+        return "customer_required"
+    db.query(models.ChatMessage).filter(
+        models.ChatMessage.customer_id == target_customer_id,
+        models.ChatMessage.sender_id != user.id,
+        models.ChatMessage.read_at.is_(None),
+    ).update({"read_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    db.commit()
+    return None
+
+
+def chat_unread_count(db: Session, user):
+    query = db.query(models.ChatMessage).filter(
+        models.ChatMessage.sender_id != user.id,
+        models.ChatMessage.read_at.is_(None),
+    )
+    if not user.is_admin:
+        query = query.filter(models.ChatMessage.customer_id == user.id)
+    return query.count()

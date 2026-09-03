@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { apiUrl } from '../api'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -30,19 +31,18 @@ function getApiBase() {
 
 // Chuẩn hoá để đảm bảo có protocol
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function Register() {
   const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
   const [password, setPassword] = useState('')
 
   const register = async () => {
     const r = await fetch(`${API}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ name, email, password })
     })
     if (r.ok) {
       alert('Registered! You can login now.')
@@ -58,6 +58,11 @@ export default function Register() {
       <h1>Create your account.</h1>
       <p>Save your cart and keep track of every order in one place.</p>
       <div className="form-stack">
+        <input
+          placeholder="Full name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+        />
         <input
           placeholder="Email"
           value={email}

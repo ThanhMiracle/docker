@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { apiUrl } from '../api'
 
 function getApiBase() {
   if (
@@ -25,10 +26,7 @@ function getApiBase() {
 
 const API_BASE = getApiBase()
 
-const API =
-  API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-    ? API_BASE
-    : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams()
@@ -55,7 +53,9 @@ export default function VerifyEmail() {
           })
         })
 
-        const data = await response.json()
+        const data = await response.json().catch(() => ({
+          detail: 'Could not reach the verification service. Open the app through the Nginx address.'
+        }))
 
         if (!response.ok) {
           throw new Error(data.detail || 'Email verification failed')

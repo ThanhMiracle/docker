@@ -1,3 +1,4 @@
+import json
 from sqlalchemy import Column, Integer, String, Float, Text, Boolean, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -6,7 +7,10 @@ from .database import Base
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False, default="")
     email = Column(String, unique=True, index=True, nullable=False)
+    phone = Column(String(40), nullable=True)
+    delivery_address = Column(Text, nullable=True)
     hashed_password = Column(String, nullable=False)
     is_admin = Column(Boolean, default=False)
     email_verified = Column(Boolean, default=False, nullable=False)
@@ -21,16 +25,28 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, index=True)
     price = Column(Float, nullable=False)
+    stock = Column(Integer, nullable=False, default=0)
     image_url = Column(String, nullable=True)
+    image_urls_json = Column(Text, nullable=True)
+    colors_json = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     owner = relationship("User", back_populates="products")
+
+    @property
+    def images(self):
+        return json.loads(self.image_urls_json) if self.image_urls_json else ([self.image_url] if self.image_url else [])
+
+    @property
+    def colors(self):
+        return json.loads(self.colors_json) if self.colors_json else []
 
 class CartItem(Base):
     __tablename__ = "cart_items"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    selected_color = Column(String, nullable=True)
     quantity = Column(Integer, nullable=False, default=1)
     user = relationship("User", back_populates="cart_items")
     product = relationship("Product")
@@ -46,6 +62,7 @@ class Order(Base):
     status = Column(String, nullable=False, default="pending_confirmation")
     confirmation_token = Column(String, unique=True, nullable=True, index=True)
     confirmation_expires_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
@@ -58,4 +75,16 @@ class OrderItem(Base):
     product_name = Column(String, nullable=False)
     unit_price = Column(Float, nullable=False)
     quantity = Column(Integer, nullable=False)
+    selected_color = Column(String, nullable=True)
     order = relationship("Order", back_populates="items")
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    customer_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    body = Column(Text, nullable=False)
+    attachment_url = Column(String(2048), nullable=True)
+    read_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sender = relationship("User", foreign_keys=[sender_id])

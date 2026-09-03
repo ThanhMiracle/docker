@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { apiUrl } from '../api'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -30,9 +31,7 @@ function getApiBase() {
 
 // Chuẩn hoá để đảm bảo có protocol
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 function getSignedInEmail() {
   const storedEmail = localStorage.getItem('user_email')
@@ -53,10 +52,11 @@ export default function Products() {
   const [limit, setLimit] = useState(12)
   const [total, setTotal] = useState(0)
   const [message, setMessage] = useState('')
+  const [selectedColors, setSelectedColors] = useState({})
   const signedInEmail = getSignedInEmail()
   const isAdmin = localStorage.getItem('is_admin') === 'true'
 
-  const addToCart = async (productId) => {
+  const addToCart = async (productId, selectedColor) => {
     const token = localStorage.getItem('token')
     if (!token) {
       setMessage('Please log in to add products to your cart.')
@@ -65,7 +65,7 @@ export default function Products() {
     const res = await fetch(`${API}/cart/items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ product_id: productId, quantity: 1 })
+      body: JSON.stringify({ product_id: productId, quantity: 1, selected_color: selectedColor || null })
     })
     if (res.ok) setMessage('Added to cart.')
     else setMessage((await res.json().catch(() => null))?.detail || 'Could not add product to cart.')
@@ -122,9 +122,9 @@ export default function Products() {
             key={p.id}
             className="product-card"
           >
-            {p.image_url && (
+            {(p.images?.[0] || p.image_url) && (
               <img
-                src={p.image_url}
+                src={p.images?.[0] || p.image_url}
                 alt={p.name}
                 style={{
                   width: '100%',
@@ -136,8 +136,9 @@ export default function Products() {
             )}
 
             <div className="product-card__body">
-            <div className="product-card__name">{p.name}</div>
+            <Link className="product-card__name" to={`/products/${p.id}`}>{p.name}</Link>
             <div className="product-card__price">${Number(p.price).toFixed(2)}</div>
+            <div className={p.stock > 0 ? 'stock-status in-stock' : 'stock-status out-of-stock'}>{p.stock > 0 ? `${p.stock} in stock` : 'Out of stock'}</div>
 
             {p.description && (
               <div className="product-card__description">
@@ -145,8 +146,12 @@ export default function Products() {
               </div>
             )}
 
+            {p.images?.length > 1 && <div className="product-thumbnails">{p.images.slice(1, 4).map((image, index) => <img key={image} src={image} alt={`${p.name} view ${index + 2}`} />)}{p.images.length > 4 && <span>+{p.images.length - 4}</span>}</div>}
+            {p.colors?.length > 0 && <div className="colour-picker"><span>Colour</span><div className="colour-options">{p.colors.map(color => <button key={color} type="button" className={selectedColors[p.id] === color ? 'colour-option selected' : 'colour-option'} onClick={() => setSelectedColors({ ...selectedColors, [p.id]: color })}>{color}</button>)}</div></div>}
+
             <div className="product-card__actions">
-              <button onClick={() => addToCart(p.id)}>Add to cart</button>
+              <button disabled={p.stock < 1} onClick={() => { if (p.colors?.length && !selectedColors[p.id]) { setMessage('Please choose a colour first.'); return } addToCart(p.id, selectedColors[p.id]) }}>{p.stock > 0 ? 'Add to cart' : 'Out of stock'}</button>
+              <Link to={`/products/${p.id}`}>View details</Link>
               {isAdmin && <Link to={`/edit/${p.id}`}>Edit</Link>}
             </div>
             </div>

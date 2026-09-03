@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { apiUrl } from '../api'
 
 // Hàm lấy API base URL theo ưu tiên:
 // 1. window.__ENV__.API_BASE (runtime trong container, do docker-entrypoint.sh inject)
@@ -32,14 +33,15 @@ function getApiBase() {
 
 // Ghép URL chuẩn có http://
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 export default function Create() {
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
-  const [file, setFile] = useState(null)
+  const [stock, setStock] = useState('0')
+  const [files, setFiles] = useState([])
+  const [colors, setColors] = useState([])
+  const [colorInput, setColorInput] = useState('')
   const [description, setDescription] = useState('')
 
   const submit = async e => {
@@ -51,10 +53,10 @@ export default function Create() {
       return
     }
 
-    let image_url = ''
+    const images = []
 
     // 1. Upload file nếu có
-    if (file) {
+    for (const file of files) {
       const fd = new FormData()
       fd.append('file', file)
 
@@ -72,15 +74,18 @@ export default function Create() {
       }
 
       const u = await up.json()
-      image_url = u.url
+      images.push(u.url)
     }
 
     // 2. Gửi dữ liệu sản phẩm
     const body = {
       name,
       price: Number(price),
-      image_url,
-      description
+      stock: Number(stock),
+      image_url: images[0] || '',
+      images,
+      colors,
+      description,
     }
 
     const res = await fetch(`${API}/products/`, {
@@ -96,7 +101,10 @@ export default function Create() {
       alert('Created!')
       setName('')
       setPrice('')
-      setFile(null)
+      setStock('0')
+      setFiles([])
+      setColors([])
+      setColorInput('')
       setDescription('')
     } else {
       alert(await res.text())
@@ -114,6 +122,7 @@ export default function Create() {
           value={name}
           onChange={e => setName(e.target.value)}
         />
+        <input placeholder="Stock quantity" type="number" min="0" value={stock} onChange={e => setStock(e.target.value)} />
         <input
           placeholder="Price"
           type="number"
@@ -123,9 +132,18 @@ export default function Create() {
         />
         <input
           type="file"
+          multiple
           accept="image/*"
-          onChange={e => setFile(e.target.files?.[0] || null)}
+          onChange={e => setFiles([...e.target.files])}
         />
+        <div className="colour-builder">
+          <label>Available colours</label>
+          <div className="colour-add-row">
+            <input placeholder="e.g. Red" value={colorInput} onChange={e => setColorInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const colour = colorInput.trim(); if (colour && !colors.includes(colour)) { setColors([...colors, colour]); setColorInput('') } } }} />
+            <button type="button" onClick={() => { const colour = colorInput.trim(); if (colour && !colors.includes(colour)) { setColors([...colors, colour]); setColorInput('') } }}>Add colour</button>
+          </div>
+          {colors.length > 0 && <div className="colour-options">{colors.map(colour => <span className="admin-colour-chip" key={colour}>{colour}<button type="button" aria-label={`Remove ${colour}`} onClick={() => setColors(colors.filter(value => value !== colour))}>×</button></span>)}</div>}
+        </div>
         <textarea
           placeholder="Description"
           value={description}

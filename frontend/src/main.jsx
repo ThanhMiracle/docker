@@ -10,7 +10,14 @@ import Cart from './pages/Cart'
 import Orders from './pages/Orders'
 import ConfirmOrder from './pages/ConfirmOrder'
 import VerifyEmail from './pages/VerifyEmail'
+import Chat from './pages/Chat'
+import ChatWidget from './components/ChatWidget'
+import SessionTimeout from './components/SessionTimeout'
+import Profile from './pages/Profile'
+import ProductDetail from './pages/ProductDetail'
 import './styles.css'
+import { apiUrl } from './api'
+import { chatSocketUrl } from './chat'
 
 // --- Hàm lấy base URL ưu tiên runtime ---
 function getApiBase() {
@@ -41,12 +48,32 @@ function getApiBase() {
 
 // Chuẩn hoá để có protocol
 const API_BASE = getApiBase()
-const API = API_BASE.startsWith('http://') || API_BASE.startsWith('https://')
-  ? API_BASE
-  : `http://${API_BASE}`
+const API = apiUrl(API_BASE)
 
 function Nav() {
   const nav = useNavigate()
+  const isSignedIn = Boolean(localStorage.getItem('token'))
+  const isAdmin = localStorage.getItem('is_admin') === 'true'
+  const [unread, setUnread] = React.useState(0)
+
+  React.useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (!token) { setUnread(0); return }
+    const loadUnread = () => fetch(`${API}/chat/unread`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(response => response.ok ? response.json() : null)
+      .then(data => data && setUnread(data.unread_count)).catch(() => {})
+    loadUnread()
+    const socket = new WebSocket(chatSocketUrl(API_BASE, token))
+    socket.onmessage = () => loadUnread()
+    window.addEventListener('chat-read', loadUnread)
+    window.addEventListener('chat-event', loadUnread)
+    return () => {
+      socket.close()
+      window.removeEventListener('chat-read', loadUnread)
+      window.removeEventListener('chat-event', loadUnread)
+    }
+  }, [isSignedIn])
 
   const logout = async () => {
     const token = localStorage.getItem('token')
@@ -68,11 +95,18 @@ function Nav() {
       <Link to="/">Shop</Link>
       {localStorage.getItem('is_admin') === 'true' && <Link to="/create">Add Product</Link>}
       <Link to="/cart">Cart</Link>
-      <Link to="/orders">My Orders</Link>
+      {isSignedIn && <Link to="/profile">Profile</Link>}
+      <Link to="/orders">{isAdmin ? 'Customer Orders' : 'My Orders'}</Link>
+      {isSignedIn && <Link className="support-link" to="/chat">Support{unread > 0 && <span className="nav-unread-badge">{unread > 99 ? '99+' : unread}</span>}</Link>}
       <div className="nav-actions">
-        <Link to="/login">Login</Link>
-        <Link to="/register">Register</Link>
-        <button onClick={logout}>Logout</button>
+        {isSignedIn ? (
+          <button onClick={logout}>Logout</button>
+        ) : (
+          <>
+            <Link to="/login">Login</Link>
+            <Link to="/register">Register</Link>
+          </>
+        )}
       </div>
     </nav>
   )
@@ -82,8 +116,11 @@ createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <Nav />
+      <SessionTimeout />
+      <ChatWidget />
       <Routes>
         <Route path="/" element={<Products />} />
+        <Route path="/products/:id" element={<ProductDetail />} />
         <Route path="/create" element={<Create />} />
         <Route path="/edit/:id" element={<Edit />} />
         <Route path="/login" element={<Login />} />
@@ -92,6 +129,8 @@ createRoot(document.getElementById('root')).render(
         <Route path="/orders" element={<Orders />} />
         <Route path="/confirm-order" element={<ConfirmOrder />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
+        <Route path="/chat" element={<Chat />} />
+        <Route path="/profile" element={<Profile />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

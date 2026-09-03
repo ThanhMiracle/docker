@@ -3,145 +3,156 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
-        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
     parameters {
-        string(
-            name: 'ALB_NAME',
-            defaultValue: '',
-            description: 'AWS Application Load Balancer name used for API_BASE'
-        )
-        choice(
-            name: 'ALB_SCHEME',
-            choices: ['https', 'http'],
-            description: 'Public protocol exposed by the ALB'
-        )
-        string(
-            name: 'AWS_DEPLOY_REGION',
-            defaultValue: 'ap-southeast-1',
-            description: 'AWS region containing the ALB'
-        )
-        string(
-            name: 'ASG_NAME',
-            defaultValue: '',
-            description: 'Auto Scaling Group whose instances receive the deployment'
-        )
-        string(
-            name: 'PROD_ENV_PARAMETER',
-            defaultValue: '/my-app/production/env',
-            description: 'SSM SecureString parameter containing the production .env'
-        )
-        string(
-            name: 'DOCKERHUB_CREDENTIAL_ID',
-            defaultValue: 'dockerhub-credentials',
-            description: 'Jenkins username/password credential ID for Docker Hub'
-        )
-        string(
-            name: 'FRONTEND_IMAGE',
-            defaultValue: 'thanh2909/my-frontend',
-            description: 'Docker image repository for the frontend'
-        )
-        string(
-            name: 'API_IMAGE',
-            defaultValue: 'thanh2909/my-api',
-            description: 'Docker image repository for the API'
-        )
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
+        string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure VM public IP address or DNS name')
+        string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute deployment directory on the Azure VM')
+        string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public URL, for example https://shop.example.com')
     }
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
+        FRONTEND_IMAGE = 'thanh2909/my-frontend'
+        API_IMAGE = 'thanh2909/my-api'
     }
 
     stages {
-        stage('Test') {
+        stage('Initialize') {
+            steps {
+                script {
+                    env.RELEASE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
+
+                    // Isolate this build from stale credentials on the agent.
+                    env.DOCKER_CONFIG = "${env.WORKSPACE}/.docker-ci-${env.BUILD_NUMBER}"
+                }
+                sh '''
+                    set -eu
+                    command -v docker
+                    mkdir -p "$DOCKER_CONFIG"
+                    chmod 700 "$DOCKER_CONFIG"
+                    echo "Building release: $RELEASE_TAG"
+                '''
+            }
+        }
+
+        stage('Test backend') {
             steps {
                 sh '''
                     set -eu
-
                     docker build \
                       --target test \
-                      --tag my-api-test:${BUILD_NUMBER} \
+                      --tag "my-api-test:$RELEASE_TAG" \
                       ./backend
 
                     docker run --rm \
                       -e DATABASE_URL=sqlite:////tmp/test.db \
                       -e JWT_SECRET=ci-only-secret \
                       -e JWT_EXPIRE_MINUTES=120 \
-                      -e AWS_REGION=ap-southeast-1 \
-                      -e AWS_S3_BUCKET=ci-test-bucket \
-                      my-api-test:${BUILD_NUMBER}
-
-                    # There is no frontend unit-test script yet. A production
-                    # compilation catches dependency and compile failures.
-                    docker build --target build ./frontend
+                      -e ADMIN_EMAIL=alice@example.com \
+                      -e STORAGE_BACKEND=minio \
+                      -e MINIO_BUCKET=ci-test-bucket \
+                      -e MINIO_PUBLIC_URL=http://minio.invalid/uploads \
+                      -e MINIO_ENDPOINT_URL=http://minio.invalid \
+                      "my-api-test:$RELEASE_TAG"
                 '''
             }
         }
 
-        stage('Build') {
+        stage('Build images') {
             steps {
                 sh '''
                     set -eu
                     docker build \
-                      --tag ${FRONTEND_IMAGE}:${BUILD_NUMBER} \
-                      --tag ${FRONTEND_IMAGE}:latest \
-                      ./frontend
-                    docker build \
-                      --tag ${API_IMAGE}:${BUILD_NUMBER} \
-                      --tag ${API_IMAGE}:latest \
+                      --target runtime \
+                      --tag "$API_IMAGE:$RELEASE_TAG" \
                       ./backend
+
+                    docker build \
+                      --target runtime \
+                      --tag "$FRONTEND_IMAGE:$RELEASE_TAG" \
+                      ./frontend
                 '''
             }
         }
 
-        stage('Push') {
-            when {
-                branch 'main'
-            }
+        stage('Push images') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: "${params.DOCKERHUB_CREDENTIAL_ID}",
-                        usernameVariable: 'DOCKERHUB_USERNAME',
-                        passwordVariable: 'DOCKERHUB_TOKEN'
-                    )
-                ]) {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-cred',
+                    usernameVariable: 'DOCKERHUB_USERNAME',
+                    passwordVariable: 'DOCKERHUB_TOKEN'
+                )]) {
                     sh '''
+                        set -eu
                         set +x
-                        printf '%s' "$DOCKERHUB_TOKEN" |
-                          docker login "$DOCKER_REGISTRY" \
-                            --username "$DOCKERHUB_USERNAME" \
-                            --password-stdin
-                        set -x
+                        printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" \
+                          --username "$DOCKERHUB_USERNAME" \
+                          --password-stdin
 
-                        docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
-                        docker push ${API_IMAGE}:${BUILD_NUMBER}
-                        docker push ${FRONTEND_IMAGE}:latest
-                        docker push ${API_IMAGE}:latest
-                        docker logout "$DOCKER_REGISTRY"
+                        docker push "$API_IMAGE:$RELEASE_TAG"
+                        docker push "$FRONTEND_IMAGE:$RELEASE_TAG"
                     '''
                 }
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy to Azure VM') {
             when {
                 branch 'main'
             }
             steps {
-                sh '''
-                    set -eu
-                    ./scripts/deploy-ssm.sh \
-                      "$ASG_NAME" \
-                      "$ALB_NAME" \
-                      "$ALB_SCHEME" \
-                      "$AWS_DEPLOY_REGION" \
-                      "$PROD_ENV_PARAMETER" \
-                      "$BUILD_NUMBER"
-                '''
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'azure-vm-ssh',
+                    keyFileVariable: 'AZURE_SSH_KEY',
+                    usernameVariable: 'AZURE_VM_USER'
+                )]) {
+                    sh '''
+                        set -eu
+
+                        test -n "$AZURE_VM_HOST" || {
+                          echo "AZURE_VM_HOST is required" >&2
+                          exit 1
+                        }
+                        test -n "$PUBLIC_BASE_URL" || {
+                          echo "PUBLIC_BASE_URL is required" >&2
+                          exit 1
+                        }
+
+                        ./scripts/deploy-azure-vm.sh \
+                          "$AZURE_VM_HOST" \
+                          "$AZURE_VM_USER" \
+                          "$AZURE_SSH_KEY" \
+                          "$DEPLOY_PATH" \
+                          "$RELEASE_TAG" \
+                          "$PUBLIC_BASE_URL" \
+                          "$FRONTEND_IMAGE" \
+                          "$API_IMAGE"
+                    '''
+                }
             }
         }
     }
 
+    post {
+        always {
+            sh '''
+                expected_config="$WORKSPACE/.docker-ci-$BUILD_NUMBER"
+                if [ "${DOCKER_CONFIG:-}" = "$expected_config" ]; then
+                    docker logout "$DOCKER_REGISTRY" >/dev/null 2>&1 || true
+                    rm -rf -- "$expected_config"
+                fi
+
+                if [ -n "${RELEASE_TAG:-}" ]; then
+                    docker image rm \
+                      "my-api-test:$RELEASE_TAG" \
+                      "$API_IMAGE:$RELEASE_TAG" \
+                      "$FRONTEND_IMAGE:$RELEASE_TAG" \
+                      >/dev/null 2>&1 || true
+                fi
+            '''
+        }
+    }
 }
