@@ -207,9 +207,10 @@ build this file from an unverified `ssh-keyscan` result inside the pipeline.
 Create the `docker-shop` project in SonarQube, generate a project analysis
 token, and store it in Jenkins as a Secret text credential with ID
 `sonarqube-token`. Set the Jenkins `SONAR_HOST_URL` parameter to a URL that is
-reachable from a Docker container on the Jenkins agent. If SonarQube runs on
-the same machine, `localhost` inside the scanner container is not the host;
-use a resolvable container name, host gateway, private IP, or DNS name.
+reachable from a Docker container on the Jenkins agent. The default,
+`http://host.docker.internal:9000`, reaches a SonarQube port published on the
+Linux Docker host; the pipeline supplies Docker's `host-gateway` mapping. A
+resolvable private IP or DNS name can be used instead.
 
 The SonarScanner configuration is in `sonar-project.properties`. Analysis runs
 on every branch and waits for the SonarQube quality gate, so a failed gate

@@ -11,7 +11,7 @@ pipeline {
     parameters {
         choice(name: 'COMPONENT', choices: ['all', 'backend', 'frontend'], description: 'Component to build and push')
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
-        string(name: 'SONAR_HOST_URL', defaultValue: 'http://sonarqube:9000', description: 'SonarQube URL reachable from the scanner container')
+        string(name: 'SONAR_HOST_URL', defaultValue: 'http://host.docker.internal:9000', description: 'SonarQube URL reachable from the scanner container')
         string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure VM public IP address or DNS name')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute deployment directory on the Azure VM')
         string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public URL, for example https://shop.example.com')
@@ -73,6 +73,10 @@ pipeline {
                 )]) {
                     sh '''
                         set -eu
+                        test -f "$WORKSPACE/sonar-project.properties" || {
+                          echo "sonar-project.properties is missing from the Jenkins checkout" >&2
+                          exit 1
+                        }
                         case "$SONAR_HOST_URL" in
                           http://*|https://*) ;;
                           *) echo "SONAR_HOST_URL must begin with http:// or https://" >&2; exit 1 ;;
@@ -80,6 +84,7 @@ pipeline {
 
                         docker run --rm \
                           --user "$(id -u):$(id -g)" \
+                          --add-host host.docker.internal:host-gateway \
                           -e SONAR_HOST_URL \
                           -e SONAR_TOKEN \
                           -e SONAR_USER_HOME=/tmp/.sonar \
