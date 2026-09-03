@@ -174,6 +174,7 @@ deploys the production Compose files to one Azure Linux VM using SSH.
 Create these Jenkins credentials:
 
 - `dockerhub-cred`: Docker Hub username and access token.
+- `sonarqube-token`: SonarQube project analysis token stored as Secret text.
 - `azure-vm-ssh`: SSH private key authorized for the Azure VM.
 - `azure-vm-known-hosts`: Secret file containing the Azure VM's verified SSH host key.
 
@@ -200,3 +201,21 @@ Obtain the VM host key from a trusted source (for example, the VM console or
 your provisioning output), save it in OpenSSH `known_hosts` format, and upload
 that file to Jenkins as a Secret file with ID `azure-vm-known-hosts`. Do not
 build this file from an unverified `ssh-keyscan` result inside the pipeline.
+
+## SonarQube and Trivy checks
+
+Create the `docker-shop` project in SonarQube, generate a project analysis
+token, and store it in Jenkins as a Secret text credential with ID
+`sonarqube-token`. Set the Jenkins `SONAR_HOST_URL` parameter to a URL that is
+reachable from a Docker container on the Jenkins agent. If SonarQube runs on
+the same machine, `localhost` inside the scanner container is not the host;
+use a resolvable container name, host gateway, private IP, or DNS name.
+
+The SonarScanner configuration is in `sonar-project.properties`. Analysis runs
+on `main` and waits for the SonarQube quality gate, so a failed gate blocks the
+image build and deployment.
+
+Trivy uses the pinned official scanner container and scans each selected image
+after it is built. Fixable HIGH or CRITICAL vulnerabilities fail the pipeline
+before Docker Hub push. Its vulnerability database is cached in the Docker
+volume `trivy-cache`; no additional Jenkins credential or plugin is required.

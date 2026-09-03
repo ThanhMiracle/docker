@@ -11,6 +11,7 @@ pipeline {
     parameters {
         choice(name: 'COMPONENT', choices: ['all', 'backend', 'frontend'], description: 'Component to build and push')
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
+        string(name: 'SONAR_HOST_URL', defaultValue: 'http://sonarqube:9000', description: 'SonarQube URL reachable from the scanner container')
         string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure VM public IP address or DNS name')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute deployment directory on the Azure VM')
         string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public URL, for example https://shop.example.com')
@@ -20,6 +21,8 @@ pipeline {
         DOCKER_REGISTRY = 'docker.io'
         FRONTEND_IMAGE = 'thanh2909/my-frontend'
         API_IMAGE = 'thanh2909/my-api'
+        SONAR_SCANNER_IMAGE = 'sonarsource/sonar-scanner-cli:12.1.0.3233_8.0.1'
+        TRIVY_IMAGE = 'aquasec/trivy:0.74.0'
     }
 
     stages {
@@ -59,6 +62,34 @@ pipeline {
                     echo "Building component: $COMPONENT"
                     echo "Building release: $RELEASE_TAG"
                 '''
+            }
+        }
+
+        stage('SonarQube analysis') {
+            when {
+                branch 'main'
+            }
+            steps {
+                withCredentials([string(
+                    credentialsId: 'sonarqube-token',
+                    variable: 'SONAR_TOKEN'
+                )]) {
+                    sh '''
+                        set -eu
+                        case "$SONAR_HOST_URL" in
+                          http://*|https://*) ;;
+                          *) echo "SONAR_HOST_URL must begin with http:// or https://" >&2; exit 1 ;;
+                        esac
+
+                        docker run --rm \
+                          --user "$(id -u):$(id -g)" \
+                          -e SONAR_HOST_URL \
+                          -e SONAR_TOKEN \
+                          -e SONAR_USER_HOME=/tmp/.sonar \
+                          -v "$WORKSPACE:/usr/src" \
+                          "$SONAR_SCANNER_IMAGE"
+                    '''
+                }
             }
         }
 
@@ -123,6 +154,48 @@ pipeline {
                       --target runtime \
                       --tag "$FRONTEND_IMAGE:$RELEASE_TAG" \
                       ./frontend
+                '''
+            }
+        }
+
+        stage('Scan backend image') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'backend'
+                }
+            }
+            steps {
+                sh '''
+                    set -eu
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v trivy-cache:/root/.cache/ \
+                      "$TRIVY_IMAGE" image \
+                      --exit-code 1 \
+                      --ignore-unfixed \
+                      --severity HIGH,CRITICAL \
+                      "$API_IMAGE:$RELEASE_TAG"
+                '''
+            }
+        }
+
+        stage('Scan frontend image') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'frontend'
+                }
+            }
+            steps {
+                sh '''
+                    set -eu
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v trivy-cache:/root/.cache/ \
+                      "$TRIVY_IMAGE" image \
+                      --exit-code 1 \
+                      --ignore-unfixed \
+                      --severity HIGH,CRITICAL \
+                      "$FRONTEND_IMAGE:$RELEASE_TAG"
                 '''
             }
         }
