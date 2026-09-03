@@ -37,41 +37,53 @@ pipeline {
             steps {
                 script {
                     env.RELEASE_TAG = params.IMAGE_TAG?.trim() ?: ''
+
+                    // Every Jenkins build gets its own local image tag.
+                    env.API_BUILD_IMAGE = "${env.API_IMAGE}:ci-${env.BUILD_NUMBER}"
+                    env.FRONTEND_BUILD_IMAGE = "${env.FRONTEND_IMAGE}:ci-${env.BUILD_NUMBER}"
+
                     currentBuild.displayName = env.RELEASE_TAG \
                         ? "#${env.BUILD_NUMBER} ${params.COMPONENT} ${env.RELEASE_TAG}" \
                         : "#${env.BUILD_NUMBER} ${params.COMPONENT} untagged"
 
-                    // Isolate this build from stale credentials on the agent.
                     env.DOCKER_CONFIG = "${env.WORKSPACE}/.docker-ci-${env.BUILD_NUMBER}"
                 }
+
                 sh '''
                     set -eu
+
                     command -v docker
                     docker version >/dev/null
 
                     case "$RELEASE_TAG" in
-                      '') ;;
-                      *[!A-Za-z0-9_.-]*)
+                    '') ;;
+                    *[!A-Za-z0-9_.-]*)
                         echo "Invalid image tag: $RELEASE_TAG" >&2
                         exit 1
                         ;;
                     esac
+
                     [ "${#RELEASE_TAG}" -le 128 ] || {
-                      echo "Image tag must not exceed 128 characters" >&2
-                      exit 1
+                    echo "Image tag must not exceed 128 characters" >&2
+                    exit 1
                     }
 
                     mkdir -p "$DOCKER_CONFIG"
                     chmod 700 "$DOCKER_CONFIG"
+
                     rm -f -- \
-                      "$WORKSPACE/.api-test-image-id" \
-                      "$WORKSPACE/.api-image-id" \
-                      "$WORKSPACE/.frontend-image-id"
+                    "$WORKSPACE/.api-test-image-id" \
+                    "$WORKSPACE/.api-image-id" \
+                    "$WORKSPACE/.frontend-image-id"
+
                     echo "Building component: $COMPONENT"
+                    echo "Backend CI image: $API_BUILD_IMAGE"
+                    echo "Frontend CI image: $FRONTEND_BUILD_IMAGE"
+
                     if [ -n "$RELEASE_TAG" ]; then
-                      echo "Building release: $RELEASE_TAG"
+                        echo "Release tag: $RELEASE_TAG"
                     else
-                      echo "No image tag supplied; push and deployment will be skipped"
+                        echo "No release tag supplied; push and deployment will be skipped"
                     fi
                 '''
             }
@@ -140,17 +152,37 @@ pipeline {
                     params.COMPONENT == 'all' || params.COMPONENT == 'backend'
                 }
             }
+
             steps {
                 sh '''
                     set -eu
-                    set -- docker build \
-                      --pull \
-                      --target runtime \
-                      --iidfile "$WORKSPACE/.api-image-id"
+
+                    echo "Building backend: $API_BUILD_IMAGE"
+
+                    docker build \
+                    --pull \
+                    --target runtime \
+                    --tag "$API_BUILD_IMAGE" \
+                    --iidfile "$WORKSPACE/.api-image-id" \
+                    ./backend
+
+                    echo "Built backend image:"
+                    docker image inspect "$API_BUILD_IMAGE" \
+                    --format='ID={{.Id}} Created={{.Created}} Tags={{json .RepoTags}}'
+
+                    echo "Image ID from iidfile:"
+                    cat "$WORKSPACE/.api-image-id"
+
+                    echo "Relevant Python package versions:"
+                    docker run --rm "$API_BUILD_IMAGE" \
+                    python -m pip freeze \
+                    | grep -E '^(msgpack|setuptools)==' || true
+
                     if [ -n "$RELEASE_TAG" ]; then
-                      set -- "$@" --tag "$API_IMAGE:$RELEASE_TAG"
+                        docker tag \
+                        "$API_BUILD_IMAGE" \
+                        "$API_IMAGE:$RELEASE_TAG"
                     fi
-                    "$@" ./backend
                 '''
             }
         }
@@ -182,17 +214,36 @@ pipeline {
                     params.COMPONENT == 'all' || params.COMPONENT == 'backend'
                 }
             }
+
             steps {
                 sh '''
                     set -eu
+
+                    echo "=========================================="
+                    echo "Scanning backend image"
+                    echo "Image: $API_BUILD_IMAGE"
+                    echo "=========================================="
+
+                    docker image inspect "$API_BUILD_IMAGE" \
+                    --format='ID={{.Id}} Created={{.Created}} Tags={{json .RepoTags}}'
+
+                    echo
+                    echo "Python packages before Trivy scan:"
+                    docker run --rm "$API_BUILD_IMAGE" \
+                    python -m pip freeze \
+                    | grep -E '^(msgpack|setuptools)==' || true
+
+                    echo
+                    echo "Starting Trivy scan..."
+
                     docker run --rm \
-                      -v /var/run/docker.sock:/var/run/docker.sock \
-                      -v trivy-cache:/root/.cache/ \
-                      "$TRIVY_IMAGE" image \
-                      --exit-code 1 \
-                      --ignore-unfixed \
-                      --severity HIGH,CRITICAL \
-                      "$(cat "$WORKSPACE/.api-image-id")"
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v trivy-cache:/root/.cache/ \
+                    "$TRIVY_IMAGE" image \
+                    --exit-code 1 \
+                    --ignore-unfixed \
+                    --severity HIGH,CRITICAL \
+                    "$API_BUILD_IMAGE"
                 '''
             }
         }
