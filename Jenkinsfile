@@ -87,24 +87,19 @@ pipeline {
                         set -eu
 
                         test -f "$WORKSPACE/sonar-project.properties" || {
-                        echo "sonar-project.properties is missing from the Jenkins checkout" >&2
-                        exit 1
+                            echo "sonar-project.properties is missing"
+                            exit 1
                         }
 
-                        case "$SONAR_HOST_URL" in
-                        http://*|https://*) ;;
-                        *)
-                            echo "SONAR_HOST_URL must begin with http:// or https://" >&2
-                            exit 1
-                            ;;
-                        esac
+                        SONAR_CACHE="$WORKSPACE/.sonar"
 
-                        export SONAR_USER_HOME="$WORKSPACE/.sonar"
-                        mkdir -p "$SONAR_USER_HOME"
+                        mkdir -p "$SONAR_CACHE"
 
-                        echo "SONAR_USER_HOME=$SONAR_USER_HOME"
+                        echo "Workspace: $WORKSPACE"
+                        echo "Sonar cache: $SONAR_CACHE"
 
-                        sonar-scan
+                        sonar-scan \
+                            -Dsonar.userHome="$SONAR_CACHE"
                     '''
                 }
             }
