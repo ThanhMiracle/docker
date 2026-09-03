@@ -59,13 +59,8 @@ EXPOSE 8000
 
 USER appuser
 
-CMD [
-    "uvicorn",
-    "app.main:app",
-    "--host", "0.0.0.0",
-    "--port", "8000",
-    "--workers", "1"
-]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+
 
 
 ########################
@@ -76,9 +71,4 @@ FROM runtime AS test
 
 COPY --chown=appuser:appuser tests ./tests
 
-CMD [
-    "pytest",
-    "-q",
-    "-p", "no:cacheprovider",
-    "/app/tests"
-]
+CMD ["pytest", "-q", "-p", "no:cacheprovider", "/app/tests"]
