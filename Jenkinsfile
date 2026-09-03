@@ -8,6 +8,9 @@ pipeline {
 
     parameters {
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
+        string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure VM public IP address or DNS name')
+        string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute deployment directory on the Azure VM')
+        string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public URL, for example https://shop.example.com')
     }
 
     environment {
@@ -91,6 +94,42 @@ pipeline {
 
                         docker push "$API_IMAGE:$RELEASE_TAG"
                         docker push "$FRONTEND_IMAGE:$RELEASE_TAG"
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Azure VM') {
+            when {
+                branch 'main'
+            }
+            steps {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'azure-vm-ssh',
+                    keyFileVariable: 'AZURE_SSH_KEY',
+                    usernameVariable: 'AZURE_VM_USER'
+                )]) {
+                    sh '''
+                        set -eu
+
+                        test -n "$AZURE_VM_HOST" || {
+                          echo "AZURE_VM_HOST is required" >&2
+                          exit 1
+                        }
+                        test -n "$PUBLIC_BASE_URL" || {
+                          echo "PUBLIC_BASE_URL is required" >&2
+                          exit 1
+                        }
+
+                        ./scripts/deploy-azure-vm.sh \
+                          "$AZURE_VM_HOST" \
+                          "$AZURE_VM_USER" \
+                          "$AZURE_SSH_KEY" \
+                          "$DEPLOY_PATH" \
+                          "$RELEASE_TAG" \
+                          "$PUBLIC_BASE_URL" \
+                          "$FRONTEND_IMAGE" \
+                          "$API_IMAGE"
                     '''
                 }
             }
