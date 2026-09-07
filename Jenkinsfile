@@ -4,10 +4,14 @@ pipeline {
     options {
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 45, unit: 'MINUTES')
+        skipDefaultCheckout(true)
     }
 
     parameters {
-        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag; defaults to v<Jenkins build number>')
+        choice(name: 'COMPONENT', choices: ['all', 'backend', 'frontend'], description: 'Component to build and push')
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Optional Docker image tag; blank builds and scans without pushing or deploying')
+        string(name: 'SONAR_HOST_URL', defaultValue: 'http://sonarqube:9000', description: 'SonarQube URL on the Docker Compose network')
         string(name: 'AZURE_VM_HOST', defaultValue: '', description: 'Azure VM public IP address or DNS name')
         string(name: 'DEPLOY_PATH', defaultValue: '/opt/my-app', description: 'Absolute deployment directory on the Azure VM')
         string(name: 'PUBLIC_BASE_URL', defaultValue: '', description: 'Public URL, for example https://shop.example.com')
@@ -17,34 +21,115 @@ pipeline {
         DOCKER_REGISTRY = 'docker.io'
         FRONTEND_IMAGE = 'thanh2909/my-frontend'
         API_IMAGE = 'thanh2909/my-api'
+        SONAR_SCANNER_IMAGE = 'sonarsource/sonar-scanner-cli:12.1.0.3233_8.0.1'
+        SONAR_USER_HOME = "${WORKSPACE}/.sonar"
+        TRIVY_IMAGE = 'aquasec/trivy:0.74.0'
     }
 
     stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
         stage('Initialize') {
             steps {
                 script {
-                    env.RELEASE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
+                    env.RELEASE_TAG = params.IMAGE_TAG?.trim() ?: ''
 
-                    // Isolate this build from stale credentials on the agent.
+                    // Every Jenkins build gets its own local image tag.
+                    env.API_BUILD_IMAGE = "${env.API_IMAGE}:ci-${env.BUILD_NUMBER}"
+                    env.FRONTEND_BUILD_IMAGE = "${env.FRONTEND_IMAGE}:ci-${env.BUILD_NUMBER}"
+
+                    currentBuild.displayName = env.RELEASE_TAG \
+                        ? "#${env.BUILD_NUMBER} ${params.COMPONENT} ${env.RELEASE_TAG}" \
+                        : "#${env.BUILD_NUMBER} ${params.COMPONENT} untagged"
+
                     env.DOCKER_CONFIG = "${env.WORKSPACE}/.docker-ci-${env.BUILD_NUMBER}"
                 }
+
                 sh '''
                     set -eu
+
                     command -v docker
+                    docker version >/dev/null
+
+                    case "$RELEASE_TAG" in
+                    '') ;;
+                    *[!A-Za-z0-9_.-]*)
+                        echo "Invalid image tag: $RELEASE_TAG" >&2
+                        exit 1
+                        ;;
+                    esac
+
+                    [ "${#RELEASE_TAG}" -le 128 ] || {
+                    echo "Image tag must not exceed 128 characters" >&2
+                    exit 1
+                    }
+
                     mkdir -p "$DOCKER_CONFIG"
                     chmod 700 "$DOCKER_CONFIG"
-                    echo "Building release: $RELEASE_TAG"
+
+                    rm -f -- \
+                    "$WORKSPACE/.api-test-image-id" \
+                    "$WORKSPACE/.api-image-id" \
+                    "$WORKSPACE/.frontend-image-id"
+
+                    echo "Building component: $COMPONENT"
+                    echo "Backend CI image: $API_BUILD_IMAGE"
+                    echo "Frontend CI image: $FRONTEND_BUILD_IMAGE"
+
+                    if [ -n "$RELEASE_TAG" ]; then
+                        echo "Release tag: $RELEASE_TAG"
+                    else
+                        echo "No release tag supplied; push and deployment will be skipped"
+                    fi
                 '''
             }
         }
 
+        stage('SonarQube analysis') {
+            steps {
+                withCredentials([string(
+                    credentialsId: 'sonarqube-token',
+                    variable: 'SONAR_TOKEN'
+                )]) {
+                    sh '''
+                        set -eu
+
+                        test -f "$WORKSPACE/sonar-project.properties" || {
+                            echo "sonar-project.properties is missing"
+                            exit 1
+                        }
+
+                        SONAR_CACHE="$WORKSPACE/.sonar"
+
+                        mkdir -p "$SONAR_CACHE"
+
+                        echo "Workspace: $WORKSPACE"
+                        echo "Sonar cache: $SONAR_CACHE"
+
+                        sonar-scan \
+                            -Dsonar.userHome="$SONAR_CACHE"
+                    '''
+                }
+            }
+        }
+
         stage('Test backend') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'backend'
+                }
+            }
             steps {
                 sh '''
                     set -eu
                     docker build \
+                      --pull \
                       --target test \
-                      --tag "my-api-test:$RELEASE_TAG" \
+                      --iidfile "$WORKSPACE/.api-test-image-id" \
                       ./backend
 
                     docker run --rm \
@@ -56,70 +141,253 @@ pipeline {
                       -e MINIO_BUCKET=ci-test-bucket \
                       -e MINIO_PUBLIC_URL=http://minio.invalid/uploads \
                       -e MINIO_ENDPOINT_URL=http://minio.invalid \
-                      "my-api-test:$RELEASE_TAG"
+                      "$(cat "$WORKSPACE/.api-test-image-id")"
                 '''
             }
         }
 
-        stage('Build images') {
+        stage('Build backend') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'backend'
+                }
+            }
+
             steps {
                 sh '''
                     set -eu
-                    docker build \
-                      --target runtime \
-                      --tag "$API_IMAGE:$RELEASE_TAG" \
-                      ./backend
+
+                    echo "Building backend: $API_BUILD_IMAGE"
 
                     docker build \
-                      --target runtime \
-                      --tag "$FRONTEND_IMAGE:$RELEASE_TAG" \
-                      ./frontend
+                    --pull \
+                    --target runtime \
+                    --tag "$API_BUILD_IMAGE" \
+                    --iidfile "$WORKSPACE/.api-image-id" \
+                    ./backend
+
+                    echo "Built backend image:"
+                    docker image inspect "$API_BUILD_IMAGE" \
+                    --format='ID={{.Id}} Created={{.Created}} Tags={{json .RepoTags}}'
+
+                    echo "Image ID from iidfile:"
+                    cat "$WORKSPACE/.api-image-id"
+
+                    echo "Relevant Python package versions:"
+                    docker run --rm "$API_BUILD_IMAGE" \
+                    python -m pip freeze \
+                    | grep -E '^(msgpack|setuptools)==' || true
+
+                    if [ -n "$RELEASE_TAG" ]; then
+                        docker tag \
+                        "$API_BUILD_IMAGE" \
+                        "$API_IMAGE:$RELEASE_TAG"
+                    fi
                 '''
             }
         }
 
-        stage('Push images') {
+        stage('Build frontend') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'frontend'
+                }
+            }
+            steps {
+                sh '''
+                    set -eu
+                    set -- docker build \
+                      --pull \
+                      --target runtime \
+                      --iidfile "$WORKSPACE/.frontend-image-id"
+                    if [ -n "$RELEASE_TAG" ]; then
+                      set -- "$@" --tag "$FRONTEND_IMAGE:$RELEASE_TAG"
+                    fi
+                    "$@" ./frontend
+                '''
+            }
+        }
+
+        stage('Scan backend image') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'backend'
+                }
+            }
+
+            steps {
+                sh '''
+                    set -eu
+
+                    echo "=========================================="
+                    echo "Scanning backend image"
+                    echo "Image: $API_BUILD_IMAGE"
+                    echo "=========================================="
+
+                    docker image inspect "$API_BUILD_IMAGE" \
+                    --format='ID={{.Id}} Created={{.Created}} Tags={{json .RepoTags}}'
+
+                    echo
+                    echo "Python packages before Trivy scan:"
+                    docker run --rm "$API_BUILD_IMAGE" \
+                    python -m pip freeze \
+                    | grep -E '^(msgpack|setuptools)==' || true
+
+                    echo
+                    echo "Starting Trivy scan..."
+
+                    docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v trivy-cache:/root/.cache/ \
+                    "$TRIVY_IMAGE" image \
+                    --exit-code 1 \
+                    --ignore-unfixed \
+                    --severity HIGH,CRITICAL \
+                    "$API_BUILD_IMAGE"
+                '''
+            }
+        }
+
+        stage('Scan frontend image') {
+            when {
+                expression {
+                    params.COMPONENT == 'all' || params.COMPONENT == 'frontend'
+                }
+            }
+            steps {
+                sh '''
+                    set -eu
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v trivy-cache:/root/.cache/ \
+                      "$TRIVY_IMAGE" image \
+                      --exit-code 1 \
+                      --ignore-unfixed \
+                      --severity HIGH,CRITICAL \
+                      "$(cat "$WORKSPACE/.frontend-image-id")"
+                '''
+            }
+        }
+
+        stage('Push backend') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression {
+                        params.IMAGE_TAG?.trim()
+                    }
+                    expression {
+                        params.COMPONENT == 'all' || params.COMPONENT == 'backend'
+                    }
+                }
+            }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-cred',
                     usernameVariable: 'DOCKERHUB_USERNAME',
                     passwordVariable: 'DOCKERHUB_TOKEN'
                 )]) {
-                    sh '''
-                        set -eu
-                        set +x
-                        printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" \
-                          --username "$DOCKERHUB_USERNAME" \
-                          --password-stdin
+                    retry(2) {
+                        sh '''
+                            set -eu
+                            set +x
+                            printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" \
+                              --username "$DOCKERHUB_USERNAME" \
+                              --password-stdin
 
-                        docker push "$API_IMAGE:$RELEASE_TAG"
-                        docker push "$FRONTEND_IMAGE:$RELEASE_TAG"
-                    '''
+                            docker push "$API_IMAGE:$RELEASE_TAG"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Push frontend') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression {
+                        params.IMAGE_TAG?.trim()
+                    }
+                    expression {
+                        params.COMPONENT == 'all' || params.COMPONENT == 'frontend'
+                    }
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-cred',
+                    usernameVariable: 'DOCKERHUB_USERNAME',
+                    passwordVariable: 'DOCKERHUB_TOKEN'
+                )]) {
+                    retry(2) {
+                        sh '''
+                            set -eu
+                            set +x
+                            printf '%s' "$DOCKERHUB_TOKEN" | docker login "$DOCKER_REGISTRY" \
+                              --username "$DOCKERHUB_USERNAME" \
+                              --password-stdin
+
+                            docker push "$FRONTEND_IMAGE:$RELEASE_TAG"
+                        '''
+                    }
                 }
             }
         }
 
         stage('Deploy to Azure VM') {
             when {
-                branch 'main'
+                allOf {
+                    branch 'main'
+                    expression {
+                        params.IMAGE_TAG?.trim()
+                    }
+                    expression {
+                        params.COMPONENT == 'all'
+                    }
+                }
             }
             steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: 'azure-vm-ssh',
-                    keyFileVariable: 'AZURE_SSH_KEY',
-                    usernameVariable: 'AZURE_VM_USER'
-                )]) {
+                withCredentials([
+                    sshUserPrivateKey(
+                        credentialsId: 'azure-vm-ssh',
+                        keyFileVariable: 'AZURE_SSH_KEY',
+                        usernameVariable: 'AZURE_VM_USER'
+                    ),
+                    file(
+                        credentialsId: 'azure-vm-known-hosts',
+                        variable: 'AZURE_KNOWN_HOSTS'
+                    )
+                ]) {
                     sh '''
                         set -eu
 
-                        test -n "$AZURE_VM_HOST" || {
-                          echo "AZURE_VM_HOST is required" >&2
-                          exit 1
-                        }
-                        test -n "$PUBLIC_BASE_URL" || {
-                          echo "PUBLIC_BASE_URL is required" >&2
-                          exit 1
-                        }
+                        case "$AZURE_VM_HOST" in
+                          ''|*[!A-Za-z0-9.:-]*)
+                            echo "AZURE_VM_HOST must be an IP address or DNS name" >&2
+                            exit 1
+                            ;;
+                        esac
+                        case "$DEPLOY_PATH" in
+                          /*) ;;
+                          *) echo "DEPLOY_PATH must be absolute" >&2; exit 1 ;;
+                        esac
+                        case "$DEPLOY_PATH" in
+                          *[!A-Za-z0-9_./-]*)
+                            echo "DEPLOY_PATH contains unsupported characters" >&2
+                            exit 1
+                            ;;
+                        esac
+                        case "$PUBLIC_BASE_URL" in
+                          http://*|https://*) ;;
+                          *) echo "PUBLIC_BASE_URL must begin with http:// or https://" >&2; exit 1 ;;
+                        esac
+                        case "$PUBLIC_BASE_URL" in
+                          *[!A-Za-z0-9.:/_-]*)
+                            echo "PUBLIC_BASE_URL contains unsupported characters" >&2
+                            exit 1
+                            ;;
+                        esac
 
                         ./scripts/deploy-azure-vm.sh \
                           "$AZURE_VM_HOST" \
@@ -129,7 +397,8 @@ pipeline {
                           "$RELEASE_TAG" \
                           "$PUBLIC_BASE_URL" \
                           "$FRONTEND_IMAGE" \
-                          "$API_IMAGE"
+                          "$API_IMAGE" \
+                          "$AZURE_KNOWN_HOSTS"
                     '''
                 }
             }
@@ -137,6 +406,12 @@ pipeline {
     }
 
     post {
+        success {
+            echo "Pipeline completed successfully for ${env.RELEASE_TAG}"
+        }
+        unsuccessful {
+            echo "Pipeline did not complete successfully. Check the failed stage before retrying."
+        }
         always {
             sh '''
                 expected_config="$WORKSPACE/.docker-ci-$BUILD_NUMBER"
@@ -147,11 +422,20 @@ pipeline {
 
                 if [ -n "${RELEASE_TAG:-}" ]; then
                     docker image rm \
-                      "my-api-test:$RELEASE_TAG" \
                       "$API_IMAGE:$RELEASE_TAG" \
                       "$FRONTEND_IMAGE:$RELEASE_TAG" \
                       >/dev/null 2>&1 || true
                 fi
+
+                for image_id_file in \
+                  "$WORKSPACE/.api-test-image-id" \
+                  "$WORKSPACE/.api-image-id" \
+                  "$WORKSPACE/.frontend-image-id"; do
+                    if [ -s "$image_id_file" ]; then
+                        docker image rm "$(cat "$image_id_file")" >/dev/null 2>&1 || true
+                        rm -f -- "$image_id_file"
+                    fi
+                done
             '''
         }
     }

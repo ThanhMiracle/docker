@@ -9,8 +9,9 @@ IMAGE_TAG="${5:-}"
 PUBLIC_BASE_URL="${6:-}"
 FRONTEND_IMAGE="${7:-thanh2909/my-frontend}"
 API_IMAGE="${8:-thanh2909/my-api}"
+SSH_KNOWN_HOSTS="${9:-}"
 
-for name in AZURE_VM_HOST AZURE_VM_USER SSH_KEY IMAGE_TAG PUBLIC_BASE_URL; do
+for name in AZURE_VM_HOST AZURE_VM_USER SSH_KEY IMAGE_TAG PUBLIC_BASE_URL SSH_KNOWN_HOSTS; do
   if [ -z "${!name}" ]; then
     echo "$name is required" >&2
     exit 1
@@ -20,7 +21,12 @@ case "$DEPLOY_PATH" in /*) ;; *) echo "DEPLOY_PATH must be absolute" >&2; exit 1
 case "$PUBLIC_BASE_URL" in http://*|https://*) ;; *) echo "PUBLIC_BASE_URL must begin with http:// or https://" >&2; exit 1 ;; esac
 
 TARGET="${AZURE_VM_USER}@${AZURE_VM_HOST}"
-SSH_OPTIONS=(-i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+SSH_OPTIONS=(
+  -i "$SSH_KEY"
+  -o BatchMode=yes
+  -o StrictHostKeyChecking=yes
+  -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS"
+)
 
 ssh "${SSH_OPTIONS[@]}" "$TARGET" \
   "install -d -m 755 '$DEPLOY_PATH/nginx' '$DEPLOY_PATH/scripts'"
