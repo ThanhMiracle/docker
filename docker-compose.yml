@@ -1,9 +1,9 @@
 services:
   api:
-    image: my-api:local
-    build:
-      context: ./backend
-      target: runtime
+    image: thanh2909/my-api:v0.4
+    # build:
+    #   context: ./backend
+    #   target: runtime
     container_name: backend
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
@@ -30,8 +30,8 @@ services:
       - appnet
 
   frontend:
-    image: my-fe:local
-    build: ./frontend
+    image: thanh2909/my-fe:v0.4
+    # build: ./frontend
     container_name: frontend
     environment:
       # Use the local reverse proxy so browser requests follow the same path
