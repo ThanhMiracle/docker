@@ -3,7 +3,7 @@ name: Build and Deploy to AKS
 on:
   push:
     branches:
-      - main
+      - master
 
 permissions:
   contents: read
@@ -19,7 +19,26 @@ env:
   K8S_NAMESPACE: platform
 
 jobs:
+  security-scan:
+    name: Security scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Scan repository with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
   build-and-deploy:
+    needs: security-scan
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
 
     steps:
