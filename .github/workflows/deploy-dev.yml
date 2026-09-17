@@ -49,7 +49,7 @@ jobs:
       - name: Build API image
         uses: docker/build-push-action@v7
         with:
-          context: ./api
+          context: ./backend
           push: false
           load: true
           tags: platform-api:${{ github.sha }}
