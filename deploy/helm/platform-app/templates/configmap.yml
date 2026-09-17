@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-app-config
+data:
+  API_BASE: {{ .Values.frontend.env.API_BASE | quote }}
+
+  JWT_EXPIRE_MINUTES: {{ .Values.api.env.JWT_EXPIRE_MINUTES | quote }}
+  CORS_ORIGINS: {{ .Values.api.env.CORS_ORIGINS | quote }}
+
+  LOGIN_RATE_LIMIT: {{ .Values.api.env.LOGIN_RATE_LIMIT | quote }}
+  LOGIN_RATE_WINDOW_SECONDS: {{ .Values.api.env.LOGIN_RATE_WINDOW_SECONDS | quote }}
+
+  SMTP_PORT: {{ .Values.api.env.SMTP_PORT | quote }}
+  SMTP_USE_TLS: {{ .Values.api.env.SMTP_USE_TLS | quote }}
+
+  STORAGE_BACKEND: {{ .Values.api.env.STORAGE_BACKEND | quote }}
+
+  MINIO_BUCKET: {{ .Values.api.env.MINIO_BUCKET | quote }}
+  MINIO_PUBLIC_URL: {{ .Values.api.env.MINIO_PUBLIC_URL | quote }}
+  MINIO_ENDPOINT_URL: {{ .Values.api.env.MINIO_ENDPOINT_URL | quote }}
+  MINIO_AUTO_CREATE_BUCKET: {{ .Values.api.env.MINIO_AUTO_CREATE_BUCKET | quote }}

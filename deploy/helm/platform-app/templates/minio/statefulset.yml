@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+
+spec:
+  serviceName: minio
+
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: minio
+
+  template:
+    metadata:
+      labels:
+        app: minio
+
+    spec:
+      containers:
+        - name: minio
+
+          image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
+
+          command:
+            - minio
+            - server
+            - /data
+            - --console-address
+            - ":9001"
+
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: MINIO_ROOT_USER
+
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: MINIO_ROOT_PASSWORD
+
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+
+  volumeClaimTemplates:
+    - metadata:
+        name: minio-data
+
+      spec:
+        accessModes:
+          - ReadWriteOnce
+
+        resources:
+          requests:
+            storage: {{ .Values.minio.persistence.size }}

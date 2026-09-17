@@ -1,0 +1,81 @@
+frontend:
+  replicaCount: 1
+
+  image:
+    repository: thanh2909/my-fe
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    port: 80
+
+  env:
+    API_BASE: "/api"
+
+
+api:
+  replicaCount: 1
+
+  image:
+    repository: thanh2909/my-api
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    port: 8000
+
+  env:
+    JWT_EXPIRE_MINUTES: "60"
+    CORS_ORIGINS: "*"
+
+    LOGIN_RATE_LIMIT: "5"
+    LOGIN_RATE_WINDOW_SECONDS: "60"
+
+    SMTP_PORT: "587"
+    SMTP_USE_TLS: "true"
+
+    STORAGE_BACKEND: "minio"
+
+    MINIO_BUCKET: "uploads"
+    MINIO_PUBLIC_URL: "/storage/uploads"
+    MINIO_ENDPOINT_URL: "http://minio:9000"
+    MINIO_AUTO_CREATE_BUCKET: "true"
+
+
+nginx:
+  replicaCount: 1
+
+  image:
+    repository: nginx
+    tag: alpine
+
+  service:
+    type: LoadBalancer
+    port: 80
+
+
+minio:
+  image:
+    repository: quay.io/minio/minio
+    tag: latest
+
+  service:
+    apiPort: 9000
+    consolePort: 9001
+
+  persistence:
+    size: 10Gi
+
+
+healthMonitor:
+  enabled: true
+
+  image:
+    repository: curlimages/curl
+    tag: "8.10.1"
+
+  intervalSeconds: "60"
+
+
+secrets:
+  existingSecret: platform-app-secrets

@@ -1,0 +1,10 @@
+{{- if .Values.healthMonitor.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: health-monitor-config
+
+data:
+  health-monitor.sh: |
+{{ .Files.Get "files/health-monitor.sh" | indent 4 }}
+{{- end }}
