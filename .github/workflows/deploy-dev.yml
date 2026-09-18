@@ -1,12 +1,19 @@
-name: Build Images
+name: Build and deploy to AKS
 
 on:
   push:
     branches:
       - master
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# Configure DOCKERHUB_USERNAME and K8S_NAMESPACE as repository variables.
+# Store credentials and application settings as repository/environment secrets.
+env:
+  K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'platform' }}
+  HELM_RELEASE: platform-app
 
 jobs:
   security-scan:
@@ -74,30 +81,148 @@ jobs:
         run: npm run build
         working-directory: ./frontend
 
-  build-images:
+  build-and-push:
+    name: Build and push images
     needs: [security-scan, test-backend, test-frontend]
-    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+
+    outputs:
+      frontend-image: ${{ steps.images.outputs.frontend-image }}
+      api-image: ${{ steps.images.outputs.api-image }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify image configuration
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+        run: test -n "$DOCKERHUB_USERNAME"
+
+      - name: Set image names
+        id: images
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+        run: |
+          echo "frontend-image=${DOCKERHUB_USERNAME}/my-fe" >> "$GITHUB_OUTPUT"
+          echo "api-image=${DOCKERHUB_USERNAME}/my-api" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.images.outputs.frontend-image }}:${{ github.sha }}
+
+      - name: Build and push API
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.images.outputs.api-image }}:${{ github.sha }}
+
+  deploy:
+    name: Deploy to AKS
+    needs: build-and-push
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      # KUBECONFIG_B64 is the base64-encoded contents of the kubeconfig file.
+      - name: Configure Kubernetes access
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          test -n "$KUBECONFIG_B64"
+          printf '%s' "$KUBECONFIG_B64" | base64 --decode > "$RUNNER_TEMP/kubeconfig"
+          chmod 600 "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
 
-      - name: Build frontend image
-        uses: docker/build-push-action@v7
+      # This only installs kubelogin. It is harmless for certificate/token-based
+      # kubeconfigs and is required when the kubeconfig invokes kubelogin.
+      - name: Install kubelogin
+        uses: azure/use-kubelogin@v1
         with:
-          context: ./frontend
-          push: false
-          load: true
-          tags: platform-frontend:${{ github.sha }}
+          kubelogin-version: v0.2.19
 
-      - name: Build API image
-        uses: docker/build-push-action@v7
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
         with:
-          context: ./backend
-          push: false
-          load: true
-          tags: platform-api:${{ github.sha }}
+          version: v3.18.4
+
+      - name: Verify cluster access
+        run: kubectl version --request-timeout=30s
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace "$K8S_NAMESPACE" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+
+      - name: Apply application secrets
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
+          MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          kubectl create secret generic platform-app-secrets \
+            --namespace "$K8S_NAMESPACE" \
+            --from-literal=DATABASE_URL="$DATABASE_URL" \
+            --from-literal=JWT_SECRET="$JWT_SECRET" \
+            --from-literal=ADMIN_EMAIL="$ADMIN_EMAIL" \
+            --from-literal=FRONTEND_BASE_URL="$FRONTEND_BASE_URL" \
+            --from-literal=SMTP_HOST="$SMTP_HOST" \
+            --from-literal=SMTP_USERNAME="$SMTP_USERNAME" \
+            --from-literal=SMTP_PASSWORD="$SMTP_PASSWORD" \
+            --from-literal=SMTP_FROM="$SMTP_FROM" \
+            --from-literal=MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            --from-literal=MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            --from-literal=MINIO_ACCESS_KEY="$MINIO_ROOT_USER" \
+            --from-literal=MINIO_SECRET_KEY="$MINIO_ROOT_PASSWORD" \
+            --from-literal=ALERT_WEBHOOK_URL="$ALERT_WEBHOOK_URL" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+
+      - name: Deploy with Helm
+        env:
+          FRONTEND_IMAGE: ${{ needs.build-and-push.outputs.frontend-image }}
+          API_IMAGE: ${{ needs.build-and-push.outputs.api-image }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          helm upgrade --install "$HELM_RELEASE" ./deploy/helm/platform-app \
+            --namespace "$K8S_NAMESPACE" \
+            --create-namespace \
+            --set-string frontend.image.repository="$FRONTEND_IMAGE" \
+            --set-string frontend.image.tag="$IMAGE_TAG" \
+            --set-string api.image.repository="$API_IMAGE" \
+            --set-string api.image.tag="$IMAGE_TAG" \
+            --wait \
+            --atomic \
+            --timeout 10m
+
+      - name: Show deployed resources
+        if: always()
+        run: |
+          kubectl get deployments,statefulsets,pods,services --namespace "$K8S_NAMESPACE"
