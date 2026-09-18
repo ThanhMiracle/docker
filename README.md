@@ -225,3 +225,17 @@ Trivy uses the pinned official scanner container and scans each selected image
 after it is built. Fixable HIGH or CRITICAL vulnerabilities fail the pipeline
 before Docker Hub push. Its vulnerability database is cached in the Docker
 volume `trivy-cache`; no additional Jenkins credential or plugin is required.
+
+
+KUBECONFIG_B64 — base64-encoded AKS kubeconfig file
+DOCKERHUB_TOKEN — Docker Hub access token with permission to push my-fe and my-api
+DATABASE_URL
+JWT_SECRET
+ADMIN_EMAIL
+FRONTEND_BASE_URL
+SMTP_HOST
+SMTP_USERNAME
+SMTP_PASSWORD
+SMTP_FROM
+MINIO_ROOT_USER
+MINIO_ROOT_PASSWORD
