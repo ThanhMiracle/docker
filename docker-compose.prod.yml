@@ -14,20 +14,21 @@ services:
     ports:
       - "80:80" # Your Azure HTTPS gateway/proxy forwards traffic to this port.
     volumes:
-      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+    networks:
+    - appnet
     restart: unless-stopped
     init: true
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-    networks: [appnet]
 
   # Frontend SPA (đang dùng image có sẵn của bạn)
   frontend:
-    image: ${FRONTEND_IMAGE:-thanh2909/my-frontend}:${IMAGE_TAG:-latest}
+    image: ${FRONTEND_IMAGE:-thanh2909/my-fe}:${IMAGE_TAG:-latest}
     container_name: frontend
     environment:
       - API_BASE=${API_BASE}
@@ -78,7 +79,7 @@ services:
       start_period: 15s
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: minio
     command: server /data --console-address ":9001"
     environment:

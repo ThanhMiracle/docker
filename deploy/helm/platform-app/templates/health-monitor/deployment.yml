@@ -1,0 +1,48 @@
+{{- if .Values.healthMonitor.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-monitor
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: health-monitor
+
+  template:
+    metadata:
+      labels:
+        app: health-monitor
+
+    spec:
+      containers:
+        - name: health-monitor
+          image: "{{ .Values.healthMonitor.image.repository }}:{{ .Values.healthMonitor.image.tag }}"
+          command:
+            - sh
+            - /monitor/health-monitor.sh
+
+          env:
+            - name: ALERT_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: ALERT_WEBHOOK_URL
+                  optional: true
+
+            - name: HEALTHCHECK_INTERVAL_SECONDS
+              value: {{ .Values.healthMonitor.intervalSeconds | quote }}
+
+          volumeMounts:
+            - name: health-monitor-script
+              mountPath: /monitor/health-monitor.sh
+              subPath: health-monitor.sh
+              readOnly: true
+
+      volumes:
+        - name: health-monitor-script
+          configMap:
+            name: health-monitor-config
+{{- end }}
