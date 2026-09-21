@@ -229,7 +229,7 @@ volume `trivy-cache`; no additional Jenkins credential or plugin is required.
 
 KUBECONFIG_B64 — base64-encoded AKS kubeconfig file
 DOCKERHUB_TOKEN — Docker Hub access token with permission to push my-fe and my-api
-DATABASE_URL
+DATABASE_URL = postgresql://psqladmin:<password>@thanhproject-dev-psql-psql.postgres.database.azure.com:5432/postgres?sslmode=require
 JWT_SECRET
 ADMIN_EMAIL
 FRONTEND_BASE_URL
@@ -239,3 +239,4 @@ SMTP_PASSWORD
 SMTP_FROM
 MINIO_ROOT_USER
 MINIO_ROOT_PASSWORD
+
