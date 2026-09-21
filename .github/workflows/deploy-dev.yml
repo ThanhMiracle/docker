@@ -157,8 +157,9 @@ jobs:
         env:
           ACR_NAME: ${{ vars.ACR_NAME }}
         run: |
-          acr_login_server=$(az acr show --name "$ACR_NAME" --query loginServer --output tsv)
-          test -n "$acr_login_server"
+          # Azure public-cloud registries use this stable login-server format.
+          # Avoiding an ARM lookup means the CI identity only needs AcrPush.
+          acr_login_server="${ACR_NAME}.azurecr.io"
           echo "frontend-image=${acr_login_server}/my-fe" >> "$GITHUB_OUTPUT"
           echo "api-image=${acr_login_server}/my-api" >> "$GITHUB_OUTPUT"
 
