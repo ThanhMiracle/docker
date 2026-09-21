@@ -12,6 +12,8 @@ spec:
 
   template:
     metadata:
+      annotations:
+        checksum/config: {{ .Files.Get "files/nginx.conf" | sha256sum }}
       labels:
         app: nginx
 

@@ -12,6 +12,8 @@ spec:
 
   template:
     metadata:
+      annotations:
+        checksum/config: {{ toJson .Values.api.env | sha256sum }}
       labels:
         app: api
 

@@ -13,6 +13,8 @@ spec:
 
   template:
     metadata:
+      annotations:
+        checksum/config: {{ .Files.Get "files/health-monitor.sh" | sha256sum }}
       labels:
         app: health-monitor
 
