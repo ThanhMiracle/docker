@@ -6,6 +6,12 @@ metadata:
 spec:
   serviceName: minio
 
+  # Preserve the PVC (and therefore the Blob container) if Helm replaces or
+  # removes this StatefulSet. Deliberately delete the PVC to delete data.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+
   replicas: 1
 
   selector:
@@ -57,7 +63,13 @@ spec:
 
       spec:
         accessModes:
-          - ReadWriteOnce
+{{- range .Values.minio.persistence.accessModes }}
+          - {{ . }}
+{{- end }}
+
+{{- if .Values.minio.persistence.storageClass }}
+        storageClassName: {{ .Values.minio.persistence.storageClass }}
+{{- end }}
 
         resources:
           requests:

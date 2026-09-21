@@ -65,6 +65,11 @@ minio:
 
   persistence:
     size: 10Gi
+    # AKS built-in Blob CSI class. It creates and mounts an Azure Blob
+    # container with BlobFuse for MinIO's /data directory.
+    storageClass: azureblob-fuse-premium
+    accessModes:
+      - ReadWriteMany
 
 
 healthMonitor:
@@ -79,3 +84,15 @@ healthMonitor:
 
 secrets:
   existingSecret: platform-app-secrets
+
+# Azure Key Vault integration for DATABASE_URL. Set enabled to true only after
+# the AKS Key Vault CSI driver and Workload Identity have been configured.
+keyVault:
+  enabled: false
+  name: ""
+  tenantId: ""
+  clientId: ""
+  databaseUrlSecretName: database-url
+  secretProviderClassName: platform-api-keyvault
+  kubernetesSecretName: platform-app-db
+  serviceAccountName: platform-api-keyvault

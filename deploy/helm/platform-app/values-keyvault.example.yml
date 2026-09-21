@@ -1,0 +1,15 @@
+# Copy to a private values file. Do not commit real values or database URLs.
+keyVault:
+  enabled: true
+  name: your-key-vault-name
+  tenantId: 00000000-0000-0000-0000-000000000000
+  clientId: 00000000-0000-0000-0000-000000000000
+  databaseUrlSecretName: database-url
+
+# MinIO data is mounted at /data from an AKS-managed Azure Blob container.
+# The Azure Blob CSI driver must be enabled on the AKS cluster first.
+minio:
+  persistence:
+    storageClass: azureblob-fuse-premium
+    accessModes:
+      - ReadWriteMany

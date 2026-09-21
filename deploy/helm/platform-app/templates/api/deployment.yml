@@ -16,8 +16,14 @@ spec:
         checksum/config: {{ toJson .Values.api.env | sha256sum }}
       labels:
         app: api
+{{ if .Values.keyVault.enabled }}
+        azure.workload.identity/use: "true"
+{{ end }}
 
     spec:
+{{ if .Values.keyVault.enabled }}
+      serviceAccountName: {{ .Values.keyVault.serviceAccountName }}
+{{ end }}
       containers:
         - name: api
 
@@ -34,6 +40,23 @@ spec:
 
             - secretRef:
                 name: {{ .Values.secrets.existingSecret }}
+
+{{ if .Values.keyVault.enabled }}
+          # This explicit variable takes precedence over any DATABASE_URL that
+          # may still be present in the legacy application secret.
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keyVault.kubernetesSecretName }}
+                  key: DATABASE_URL
+
+          volumeMounts:
+            # Mounting triggers the CSI driver to sync the Key Vault value.
+            - name: keyvault-secrets
+              mountPath: /mnt/keyvault
+              readOnly: true
+{{ end }}
 
           startupProbe:
             httpGet:
@@ -58,3 +81,13 @@ spec:
 
             periodSeconds: 30
             timeoutSeconds: 5
+
+{{ if .Values.keyVault.enabled }}
+      volumes:
+        - name: keyvault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ .Values.keyVault.secretProviderClassName }}
+{{ end }}
