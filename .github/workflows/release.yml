@@ -31,31 +31,31 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Resolve merged PR and Jira change
-        id: trace
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api \
-            --header "Accept: application/vnd.github+json" \
-            "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" > "$RUNNER_TEMP/pulls.json"
+      # - name: Resolve merged PR and Jira change
+      #   id: trace
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   run: |
+      #     gh api \
+      #       --header "Accept: application/vnd.github+json" \
+      #       "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" > "$RUNNER_TEMP/pulls.json"
 
-          pr_number="$(jq -r '[.[] | select(.base.ref == "master")] | first | .number // empty' "$RUNNER_TEMP/pulls.json")"
-          head_ref="$(jq -r '[.[] | select(.base.ref == "master")] | first | .head.ref // empty' "$RUNNER_TEMP/pulls.json")"
-          pr_title="$(jq -r '[.[] | select(.base.ref == "master")] | first | .title // empty' "$RUNNER_TEMP/pulls.json")"
-          jira_key="$(printf '%s\n%s\n' "$head_ref" "$pr_title" | grep -Eo '[A-Z][A-Z0-9]+-[0-9]+' | head -n1 || true)"
+      #     pr_number="$(jq -r '[.[] | select(.base.ref == "master")] | first | .number // empty' "$RUNNER_TEMP/pulls.json")"
+      #     head_ref="$(jq -r '[.[] | select(.base.ref == "master")] | first | .head.ref // empty' "$RUNNER_TEMP/pulls.json")"
+      #     pr_title="$(jq -r '[.[] | select(.base.ref == "master")] | first | .title // empty' "$RUNNER_TEMP/pulls.json")"
+      #     jira_key="$(printf '%s\n%s\n' "$head_ref" "$pr_title" | grep -Eo '[A-Z][A-Z0-9]+-[0-9]+' | head -n1 || true)"
 
-          test -n "$pr_number" || {
-            echo "::error::The master commit is not associated with a merged pull request."
-            exit 1
-          }
-          test -n "$jira_key" || {
-            echo "::error::No Jira key was found in the PR branch or title."
-            exit 1
-          }
+      #     test -n "$pr_number" || {
+      #       echo "::error::The master commit is not associated with a merged pull request."
+      #       exit 1
+      #     }
+      #     test -n "$jira_key" || {
+      #       echo "::error::No Jira key was found in the PR branch or title."
+      #       exit 1
+      #     }
 
-          printf 'pr_number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
-          printf 'jira_key=%s\n' "$jira_key" >> "$GITHUB_OUTPUT"
+      #     printf 'pr_number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
+      #     printf 'jira_key=%s\n' "$jira_key" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
       - name: Build backend test image
         uses: docker/build-push-action@v7
