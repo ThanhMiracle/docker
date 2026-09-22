@@ -149,7 +149,8 @@ jobs:
         run: az acr login --name "$ACR_NAME"
       - name: Build release images once
         run: |
-          docker build --file backend/Dockerfile --tag "$ACR_LOGIN_SERVER/$API_IMAGE_NAME:$GITHUB_SHA" backend
+          # Dockerfile's final stage is test; production must use runtime.
+          docker build --file backend/Dockerfile --target runtime --tag "$ACR_LOGIN_SERVER/$API_IMAGE_NAME:$GITHUB_SHA" backend
           docker build --file frontend/Dockerfile --tag "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME:$GITHUB_SHA" frontend
           docker build --file nginx/Dockerfile --tag "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME:$GITHUB_SHA" nginx
       - name: Scan API release image

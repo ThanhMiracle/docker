@@ -72,11 +72,11 @@ minio:
 
   persistence:
     size: 10Gi
-    # AKS built-in Blob CSI class. It creates and mounts an Azure Blob
-    # container with BlobFuse for MinIO's /data directory.
-    storageClass: azureblob-fuse-premium
+    # The cluster's built-in managed disk CSI class. MinIO is a single-replica
+    # StatefulSet, so ReadWriteOnce is the appropriate access mode.
+    storageClass: managed-csi
     accessModes:
-      - ReadWriteMany
+      - ReadWriteOnce
 
 
 healthMonitor:

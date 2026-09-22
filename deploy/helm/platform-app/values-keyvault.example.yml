@@ -6,10 +6,10 @@ keyVault:
   clientId: 00000000-0000-0000-0000-000000000000
   databaseUrlSecretName: database-url
 
-# MinIO data is mounted at /data from an AKS-managed Azure Blob container.
-# The Azure Blob CSI driver must be enabled on the AKS cluster first.
+# MinIO is a single-replica StatefulSet. Use an AKS managed-disk CSI class
+# available on the target cluster.
 minio:
   persistence:
-    storageClass: azureblob-fuse-premium
+    storageClass: managed-csi
     accessModes:
-      - ReadWriteMany
+      - ReadWriteOnce
