@@ -14,6 +14,15 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ .Files.Get "files/nginx.conf" | sha256sum }}
+        {{- with .Values.release.commit }}
+        devops.platform/commit: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.release.jiraKey }}
+        devops.platform/jira-key: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.release.workflowRunId }}
+        devops.platform/workflow-run-id: {{ . | quote }}
+        {{- end }}
       labels:
         app: nginx
 
@@ -21,7 +30,9 @@ spec:
       containers:
         - name: nginx
 
-          image: "{{ .Values.nginx.image.repository }}:{{ .Values.nginx.image.tag }}"
+          image: {{ include "platform-app.image" (dict "name" "nginx" "image" .Values.nginx.image) | quote }}
+
+          imagePullPolicy: {{ .Values.nginx.image.pullPolicy }}
 
           ports:
             - containerPort: 80

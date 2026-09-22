@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 import os
 import json
@@ -62,6 +63,19 @@ database.configure_single_admin(os.getenv("ADMIN_EMAIL"))
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready():
+    """Report readiness only when the API can reach its database."""
+    try:
+        with database.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("Database readiness check failed")
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    return {"status": "ready"}
 
 
 @app.get("/profile", response_model=schemas.UserProfileOut)

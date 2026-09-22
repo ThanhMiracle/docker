@@ -13,13 +13,22 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ toJson .Values.frontend.env | sha256sum }}
+        {{- with .Values.release.commit }}
+        devops.platform/commit: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.release.jiraKey }}
+        devops.platform/jira-key: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.release.workflowRunId }}
+        devops.platform/workflow-run-id: {{ . | quote }}
+        {{- end }}
       labels:
         app: frontend
 
     spec:
       containers:
         - name: frontend
-          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          image: {{ include "platform-app.image" (dict "name" "frontend" "image" .Values.frontend.image) | quote }}
 
           imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
 

@@ -3,7 +3,9 @@ frontend:
 
   image:
     repository: thanh2909/my-fe
-    tag: latest
+    # Production releases must set digest. tag is retained solely for local/dev.
+    tag: ""
+    digest: ""
     pullPolicy: IfNotPresent
 
   service:
@@ -18,7 +20,9 @@ api:
 
   image:
     repository: thanh2909/my-api
-    tag: latest
+    # Production releases must set digest. tag is retained solely for local/dev.
+    tag: ""
+    digest: ""
     pullPolicy: IfNotPresent
 
   service:
@@ -46,8 +50,11 @@ nginx:
   replicaCount: 1
 
   image:
-    repository: nginx
-    tag: alpine
+    repository: thanh2909/my-nginx
+    # Production releases must set digest. tag is retained solely for local/dev.
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
 
   service:
     type: LoadBalancer
@@ -57,7 +64,7 @@ nginx:
 minio:
   image:
     repository: quay.io/minio/minio
-    tag: latest
+    tag: RELEASE.2025-04-22T22-12-26Z
 
   service:
     apiPort: 9000
@@ -84,6 +91,12 @@ healthMonitor:
 
 secrets:
   existingSecret: platform-app-secrets
+
+# Correlation metadata written onto the production Pods by deploy-prod.yml.
+release:
+  commit: ""
+  jiraKey: ""
+  workflowRunId: ""
 
 # Azure Key Vault integration for DATABASE_URL. Set enabled to true only after
 # the AKS Key Vault CSI driver and Workload Identity have been configured.

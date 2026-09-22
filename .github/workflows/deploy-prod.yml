@@ -1,0 +1,261 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Successful Build Release workflow run ID
+        required: true
+        type: string
+      jira_key:
+        description: Jira key recorded in that release (for example APP-123)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-platform-app
+  cancel-in-progress: false
+
+env:
+  AKS_RG: ${{ vars.AKS_RESOURCE_GROUP }}
+  AKS_NAME: ${{ vars.AKS_NAME }}
+  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+  NAMESPACE: ${{ vars.K8S_NAMESPACE || 'platform' }}
+  RELEASE_NAME: platform-app
+  SMOKE_TEST_URL: ${{ vars.PROD_SMOKE_TEST_URL }}
+
+jobs:
+  resolve-release:
+    name: Validate release evidence
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.manifest.outputs.commit }}
+      pr_number: ${{ steps.manifest.outputs.pr_number }}
+      api_repository: ${{ steps.manifest.outputs.api_repository }}
+      api_digest: ${{ steps.manifest.outputs.api_digest }}
+      frontend_repository: ${{ steps.manifest.outputs.frontend_repository }}
+      frontend_digest: ${{ steps.manifest.outputs.frontend_digest }}
+      nginx_repository: ${{ steps.manifest.outputs.nginx_repository }}
+      nginx_digest: ${{ steps.manifest.outputs.nginx_digest }}
+    steps:
+      - name: Validate request format
+        run: |
+          [[ "${{ inputs.release_run_id }}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${{ inputs.jira_key }}" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]]
+      - name: Download evidence produced by Build Release
+        uses: actions/download-artifact@v4
+        with:
+          name: release-evidence
+          path: release
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate checksums and release manifest
+        id: manifest
+        run: |
+          (cd release && sha256sum --check checksums.txt)
+          manifest=release/release-manifest.json
+          jq --exit-status '.schema_version == 1' "$manifest" >/dev/null
+
+          test "$(jq -r '.workflow_run_id' "$manifest")" = "${{ inputs.release_run_id }}"
+          test "$(jq -r '.jira_key' "$manifest")" = "${{ inputs.jira_key }}"
+
+          commit="$(jq -r '.commit' "$manifest")"
+          pr_number="$(jq -r '.pull_request' "$manifest")"
+          api_repository="$(jq -r '.images.api.repository' "$manifest")"
+          api_digest="$(jq -r '.images.api.digest' "$manifest")"
+          frontend_repository="$(jq -r '.images.frontend.repository' "$manifest")"
+          frontend_digest="$(jq -r '.images.frontend.digest' "$manifest")"
+          nginx_repository="$(jq -r '.images.nginx.repository' "$manifest")"
+          nginx_digest="$(jq -r '.images.nginx.digest' "$manifest")"
+
+          [[ "$commit" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]
+          test "$api_repository" = "$ACR_LOGIN_SERVER/my-api"
+          test "$frontend_repository" = "$ACR_LOGIN_SERVER/my-fe"
+          test "$nginx_repository" = "$ACR_LOGIN_SERVER/my-nginx"
+          for digest in "$api_digest" "$frontend_digest" "$nginx_digest"; do
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          done
+
+          for output in commit pr_number api_repository api_digest frontend_repository frontend_digest nginx_repository nginx_digest; do
+            printf '%s=%s\n' "$output" "${!output}" >> "$GITHUB_OUTPUT"
+          done
+      - name: Write approval context
+        run: |
+          {
+            echo "## Release awaiting production approval"
+            echo ""
+            echo "- Jira: ${{ inputs.jira_key }}"
+            echo "- Release workflow run: ${{ inputs.release_run_id }}"
+            echo "- Pull request: #${{ steps.manifest.outputs.pr_number }}"
+            echo "- Commit: \`${{ steps.manifest.outputs.commit }}\`"
+            echo "- API digest: \`${{ steps.manifest.outputs.api_digest }}\`"
+            echo "- Frontend digest: \`${{ steps.manifest.outputs.frontend_digest }}\`"
+            echo "- Nginx digest: \`${{ steps.manifest.outputs.nginx_digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Approved production deployment
+    needs: resolve-release
+    environment: production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.3.0
+      - uses: azure/use-kubelogin@v1
+        with:
+          kubelogin-version: v0.2.19
+      - name: Validate production configuration
+        env:
+          AZURE_DEPLOY_CLIENT_ID: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          KEY_VAULT_ENABLED: ${{ vars.KEY_VAULT_ENABLED || 'false' }}
+          KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
+          API_KEYVAULT_CLIENT_ID: ${{ vars.API_KEYVAULT_CLIENT_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
+          MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
+        run: |
+          for name in AKS_RG AKS_NAME ACR_LOGIN_SERVER SMOKE_TEST_URL \
+            AZURE_DEPLOY_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            JWT_SECRET ADMIN_EMAIL SMTP_HOST SMTP_USERNAME SMTP_PASSWORD \
+            SMTP_FROM MINIO_ROOT_USER MINIO_ROOT_PASSWORD; do
+            test -n "${!name}" || {
+              echo "::error::$name is missing or empty"
+              exit 1
+            }
+          done
+          if [[ "$KEY_VAULT_ENABLED" = true ]]; then
+            test -n "$KEY_VAULT_NAME"
+            test -n "$API_KEYVAULT_CLIENT_ID"
+          else
+            test -n "$DATABASE_URL"
+          fi
+      - name: Sign in to Azure with the production OIDC identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Set AKS context
+        run: |
+          az aks get-credentials \
+            --resource-group "$AKS_RG" \
+            --name "$AKS_NAME" \
+            --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+          kubectl create namespace "$NAMESPACE" --dry-run=client --output yaml | kubectl apply -f -
+      - name: Apply application runtime secret
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
+          MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          kubectl create secret generic platform-app-secrets \
+            --namespace "$NAMESPACE" \
+            --from-literal=DATABASE_URL="$DATABASE_URL" \
+            --from-literal=JWT_SECRET="$JWT_SECRET" \
+            --from-literal=ADMIN_EMAIL="$ADMIN_EMAIL" \
+            --from-literal=SMTP_HOST="$SMTP_HOST" \
+            --from-literal=SMTP_USERNAME="$SMTP_USERNAME" \
+            --from-literal=SMTP_PASSWORD="$SMTP_PASSWORD" \
+            --from-literal=SMTP_FROM="$SMTP_FROM" \
+            --from-literal=MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            --from-literal=MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            --from-literal=MINIO_ACCESS_KEY="$MINIO_ROOT_USER" \
+            --from-literal=MINIO_SECRET_KEY="$MINIO_ROOT_PASSWORD" \
+            --from-literal=ALERT_WEBHOOK_URL="$ALERT_WEBHOOK_URL" \
+            --dry-run=client --output yaml | kubectl apply -f -
+      - name: Deploy only the approved immutable release
+        env:
+          KEY_VAULT_ENABLED: ${{ vars.KEY_VAULT_ENABLED || 'false' }}
+          KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
+          API_KEYVAULT_CLIENT_ID: ${{ vars.API_KEYVAULT_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          key_vault_args=(
+            --set "keyVault.enabled=$KEY_VAULT_ENABLED"
+          )
+          if [[ "$KEY_VAULT_ENABLED" = true ]]; then
+            key_vault_args+=(
+              --set-string "keyVault.name=$KEY_VAULT_NAME"
+              --set-string "keyVault.tenantId=$AZURE_TENANT_ID"
+              --set-string "keyVault.clientId=$API_KEYVAULT_CLIENT_ID"
+            )
+          fi
+
+          helm upgrade --install "$RELEASE_NAME" ./deploy/helm/platform-app \
+            --namespace "$NAMESPACE" \
+            --set-string api.image.repository="${{ needs.resolve-release.outputs.api_repository }}" \
+            --set-string api.image.digest="${{ needs.resolve-release.outputs.api_digest }}" \
+            --set-string frontend.image.repository="${{ needs.resolve-release.outputs.frontend_repository }}" \
+            --set-string frontend.image.digest="${{ needs.resolve-release.outputs.frontend_digest }}" \
+            --set-string nginx.image.repository="${{ needs.resolve-release.outputs.nginx_repository }}" \
+            --set-string nginx.image.digest="${{ needs.resolve-release.outputs.nginx_digest }}" \
+            --set-string release.commit="${{ needs.resolve-release.outputs.commit }}" \
+            --set-string release.jiraKey="${{ inputs.jira_key }}" \
+            --set-string release.workflowRunId="${{ inputs.release_run_id }}" \
+            "${key_vault_args[@]}" \
+            --wait \
+            --timeout 10m \
+            --history-max 20
+      - name: Verify rollout, readiness, services, and running digests
+        run: |
+          bash scripts/verify-deployment.sh \
+            "$NAMESPACE" \
+            "${{ needs.resolve-release.outputs.api_digest }}" \
+            "${{ needs.resolve-release.outputs.frontend_digest }}" \
+            "${{ needs.resolve-release.outputs.nginx_digest }}"
+      - name: Run public smoke and dependency tests
+        run: bash scripts/smoke-test.sh "$SMOKE_TEST_URL"
+      - name: Write deployment evidence
+        run: |
+          {
+            echo "## Production release verified"
+            echo ""
+            echo "- Jira: ${{ inputs.jira_key }}"
+            echo "- Release workflow run: ${{ inputs.release_run_id }}"
+            echo "- Pull request: #${{ needs.resolve-release.outputs.pr_number }}"
+            echo "- Commit: \`${{ needs.resolve-release.outputs.commit }}\`"
+            echo "- Helm release: $RELEASE_NAME"
+            echo "- Namespace: $NAMESPACE"
+            echo "- Deployment identity: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}"
+            echo "- Smoke test: $SMOKE_TEST_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect failure diagnostics for human decision
+        if: failure()
+        run: |
+          kubectl get deployments,statefulsets,pods,services,endpoints --namespace "$NAMESPACE" -o wide || true
+          kubectl get events --namespace "$NAMESPACE" --sort-by=.lastTimestamp | tail -n 100 || true
+          for workload in api frontend nginx; do
+            kubectl logs "deployment/$workload" --namespace "$NAMESPACE" --tail=100 || true
+          done
+          {
+            echo "## Verification failed"
+            echo ""
+            echo "No automatic rollback was performed. An authorized reviewer must choose rollback, recovery, roll-forward, or pause."
+          } >> "$GITHUB_STEP_SUMMARY"

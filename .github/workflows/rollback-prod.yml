@@ -1,0 +1,194 @@
+name: Rollback Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Build Release run ID for the artifact being restored
+        required: true
+        type: string
+      revision:
+        description: Helm revision that deployed that artifact
+        required: true
+        type: string
+      jira_key:
+        description: Jira change or incident authorizing the rollback
+        required: true
+        type: string
+      reason:
+        description: Human decision rationale
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-platform-app
+  cancel-in-progress: false
+
+env:
+  AKS_RG: ${{ vars.AKS_RESOURCE_GROUP }}
+  AKS_NAME: ${{ vars.AKS_NAME }}
+  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+  NAMESPACE: ${{ vars.K8S_NAMESPACE || 'platform' }}
+  RELEASE_NAME: platform-app
+  SMOKE_TEST_URL: ${{ vars.PROD_SMOKE_TEST_URL }}
+
+jobs:
+  resolve-release:
+    name: Validate rollback artifact
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.manifest.outputs.commit }}
+      release_jira_key: ${{ steps.manifest.outputs.release_jira_key }}
+      api_reference: ${{ steps.manifest.outputs.api_reference }}
+      api_digest: ${{ steps.manifest.outputs.api_digest }}
+      frontend_reference: ${{ steps.manifest.outputs.frontend_reference }}
+      frontend_digest: ${{ steps.manifest.outputs.frontend_digest }}
+      nginx_reference: ${{ steps.manifest.outputs.nginx_reference }}
+      nginx_digest: ${{ steps.manifest.outputs.nginx_digest }}
+    steps:
+      - name: Validate request format
+        env:
+          REASON: ${{ inputs.reason }}
+        run: |
+          [[ "${{ inputs.release_run_id }}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${{ inputs.revision }}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${{ inputs.jira_key }}" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]]
+          test -n "$REASON"
+      - name: Download evidence for the artifact being restored
+        uses: actions/download-artifact@v4
+        with:
+          name: release-evidence
+          path: release
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate checksums and extract artifact identity
+        id: manifest
+        run: |
+          (cd release && sha256sum --check checksums.txt)
+          manifest=release/release-manifest.json
+          jq --exit-status '.schema_version == 1' "$manifest" >/dev/null
+          test "$(jq -r '.workflow_run_id' "$manifest")" = "${{ inputs.release_run_id }}"
+
+          commit="$(jq -r '.commit' "$manifest")"
+          release_jira_key="$(jq -r '.jira_key' "$manifest")"
+          api_repository="$(jq -r '.images.api.repository' "$manifest")"
+          api_digest="$(jq -r '.images.api.digest' "$manifest")"
+          frontend_repository="$(jq -r '.images.frontend.repository' "$manifest")"
+          frontend_digest="$(jq -r '.images.frontend.digest' "$manifest")"
+          nginx_repository="$(jq -r '.images.nginx.repository' "$manifest")"
+          nginx_digest="$(jq -r '.images.nginx.digest' "$manifest")"
+
+          [[ "$commit" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$release_jira_key" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]]
+          test "$api_repository" = "$ACR_LOGIN_SERVER/my-api"
+          test "$frontend_repository" = "$ACR_LOGIN_SERVER/my-fe"
+          test "$nginx_repository" = "$ACR_LOGIN_SERVER/my-nginx"
+          for digest in "$api_digest" "$frontend_digest" "$nginx_digest"; do
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          done
+
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+          printf 'release_jira_key=%s\n' "$release_jira_key" >> "$GITHUB_OUTPUT"
+          printf 'api_reference=%s@%s\n' "$api_repository" "$api_digest" >> "$GITHUB_OUTPUT"
+          printf 'api_digest=%s\n' "$api_digest" >> "$GITHUB_OUTPUT"
+          printf 'frontend_reference=%s@%s\n' "$frontend_repository" "$frontend_digest" >> "$GITHUB_OUTPUT"
+          printf 'frontend_digest=%s\n' "$frontend_digest" >> "$GITHUB_OUTPUT"
+          printf 'nginx_reference=%s@%s\n' "$nginx_repository" "$nginx_digest" >> "$GITHUB_OUTPUT"
+          printf 'nginx_digest=%s\n' "$nginx_digest" >> "$GITHUB_OUTPUT"
+      - name: Write approval context
+        env:
+          REASON: ${{ inputs.reason }}
+        run: |
+          {
+            echo "## Rollback awaiting production approval"
+            echo ""
+            echo "- Authorization Jira: ${{ inputs.jira_key }}"
+            echo "- Reason: $REASON"
+            echo "- Target Helm revision: ${{ inputs.revision }}"
+            echo "- Artifact release run: ${{ inputs.release_run_id }}"
+            echo "- Original release Jira: ${{ steps.manifest.outputs.release_jira_key }}"
+            echo "- Commit: \`${{ steps.manifest.outputs.commit }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  rollback:
+    name: Approved production rollback
+    needs: resolve-release
+    environment: production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.3.0
+      - uses: azure/use-kubelogin@v1
+        with:
+          kubelogin-version: v0.2.19
+      - name: Validate production configuration
+        run: |
+          test -n "$AKS_RG"
+          test -n "$AKS_NAME"
+          test -n "$SMOKE_TEST_URL"
+      - name: Sign in to Azure with the production OIDC identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Set AKS context
+        run: |
+          az aks get-credentials \
+            --resource-group "$AKS_RG" \
+            --name "$AKS_NAME" \
+            --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+      - name: Verify selected revision contains the approved artifact
+        run: |
+          helm get manifest "$RELEASE_NAME" \
+            --revision "${{ inputs.revision }}" \
+            --namespace "$NAMESPACE" > "$RUNNER_TEMP/rollback-manifest.yaml"
+          grep --fixed-strings --quiet "${{ needs.resolve-release.outputs.api_reference }}" "$RUNNER_TEMP/rollback-manifest.yaml"
+          grep --fixed-strings --quiet "${{ needs.resolve-release.outputs.frontend_reference }}" "$RUNNER_TEMP/rollback-manifest.yaml"
+          grep --fixed-strings --quiet "${{ needs.resolve-release.outputs.nginx_reference }}" "$RUNNER_TEMP/rollback-manifest.yaml"
+      - name: Roll back only the selected Helm revision
+        run: |
+          helm history "$RELEASE_NAME" --namespace "$NAMESPACE"
+          helm rollback "$RELEASE_NAME" "${{ inputs.revision }}" \
+            --namespace "$NAMESPACE" \
+            --wait \
+            --timeout 10m
+      - name: Verify restored rollout and image digests
+        run: |
+          bash scripts/verify-deployment.sh \
+            "$NAMESPACE" \
+            "${{ needs.resolve-release.outputs.api_digest }}" \
+            "${{ needs.resolve-release.outputs.frontend_digest }}" \
+            "${{ needs.resolve-release.outputs.nginx_digest }}"
+      - name: Run public smoke and dependency tests
+        run: bash scripts/smoke-test.sh "$SMOKE_TEST_URL"
+      - name: Write rollback evidence
+        env:
+          REASON: ${{ inputs.reason }}
+        run: |
+          {
+            echo "## Production rollback verified"
+            echo ""
+            echo "- Authorization Jira: ${{ inputs.jira_key }}"
+            echo "- Reason: $REASON"
+            echo "- Restored Helm revision: ${{ inputs.revision }}"
+            echo "- Artifact release run: ${{ inputs.release_run_id }}"
+            echo "- Original release Jira: ${{ needs.resolve-release.outputs.release_jira_key }}"
+            echo "- Commit: \`${{ needs.resolve-release.outputs.commit }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect failure diagnostics for human decision
+        if: failure()
+        run: |
+          kubectl get deployments,statefulsets,pods,services,endpoints --namespace "$NAMESPACE" -o wide || true
+          kubectl get events --namespace "$NAMESPACE" --sort-by=.lastTimestamp | tail -n 100 || true

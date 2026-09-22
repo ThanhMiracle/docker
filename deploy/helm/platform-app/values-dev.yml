@@ -1,0 +1,13 @@
+# Development-only tags. Production deployments are digest-pinned by the
+# GitHub Actions workflow and must not use this file.
+frontend:
+  image:
+    tag: latest
+
+api:
+  image:
+    tag: latest
+
+nginx:
+  image:
+    tag: latest
