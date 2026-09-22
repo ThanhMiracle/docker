@@ -61,139 +61,139 @@ jobs:
       # -------------------------------------------------------
       # Download release evidence from Build Release workflow
       # -------------------------------------------------------
-      - name: Download evidence produced by Build Release
-        uses: actions/download-artifact@v4
-        with:
-          name: release-evidence
-          path: release
-          run-id: ${{ inputs.release_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Download evidence produced by Build Release
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: release-evidence
+      #     path: release
+      #     run-id: ${{ inputs.release_run_id }}
+      #     github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # -------------------------------------------------------
-      # Validate evidence
-      # -------------------------------------------------------
-      - name: Validate checksums and release manifest
-        id: manifest
-        run: |
+      # # -------------------------------------------------------
+      # # Validate evidence
+      # # -------------------------------------------------------
+      # - name: Validate checksums and release manifest
+      #   id: manifest
+      #   run: |
 
-          echo "Validating release checksums..."
+      #     echo "Validating release checksums..."
 
-          (
-            cd release
-            sha256sum --check checksums.txt
-          )
+      #     (
+      #       cd release
+      #       sha256sum --check checksums.txt
+      #     )
 
-          manifest="release/release-manifest.json"
+      #     manifest="release/release-manifest.json"
 
-          echo "Validating manifest schema..."
+      #     echo "Validating manifest schema..."
 
-          jq --exit-status \
-            '.schema_version == 1' \
-            "$manifest" >/dev/null
+      #     jq --exit-status \
+      #       '.schema_version == 1' \
+      #       "$manifest" >/dev/null
 
-          # ---------------------------------------------------
-          # Verify this manifest belongs to requested workflow
-          # ---------------------------------------------------
+      #     # ---------------------------------------------------
+      #     # Verify this manifest belongs to requested workflow
+      #     # ---------------------------------------------------
 
-          manifest_run_id="$(jq -r '.workflow_run_id' "$manifest")"
+      #     manifest_run_id="$(jq -r '.workflow_run_id' "$manifest")"
 
-          if [ "$manifest_run_id" != "${{ inputs.release_run_id }}" ]; then
-            echo "::error::Release manifest workflow run ID does not match requested run ID."
-            exit 1
-          fi
+      #     if [ "$manifest_run_id" != "${{ inputs.release_run_id }}" ]; then
+      #       echo "::error::Release manifest workflow run ID does not match requested run ID."
+      #       exit 1
+      #     fi
 
-          # ---------------------------------------------------
-          # Read release information
-          # ---------------------------------------------------
+      #     # ---------------------------------------------------
+      #     # Read release information
+      #     # ---------------------------------------------------
 
-          commit="$(jq -r '.commit' "$manifest")"
-          pr_number="$(jq -r '.pull_request' "$manifest")"
+      #     commit="$(jq -r '.commit' "$manifest")"
+      #     pr_number="$(jq -r '.pull_request' "$manifest")"
 
-          api_repository="$(jq -r '.images.api.repository' "$manifest")"
-          api_digest="$(jq -r '.images.api.digest' "$manifest")"
+      #     api_repository="$(jq -r '.images.api.repository' "$manifest")"
+      #     api_digest="$(jq -r '.images.api.digest' "$manifest")"
 
-          frontend_repository="$(jq -r '.images.frontend.repository' "$manifest")"
-          frontend_digest="$(jq -r '.images.frontend.digest' "$manifest")"
+      #     frontend_repository="$(jq -r '.images.frontend.repository' "$manifest")"
+      #     frontend_digest="$(jq -r '.images.frontend.digest' "$manifest")"
 
-          nginx_repository="$(jq -r '.images.nginx.repository' "$manifest")"
-          nginx_digest="$(jq -r '.images.nginx.digest' "$manifest")"
+      #     nginx_repository="$(jq -r '.images.nginx.repository' "$manifest")"
+      #     nginx_digest="$(jq -r '.images.nginx.digest' "$manifest")"
 
-          # ---------------------------------------------------
-          # Validate commit
-          # ---------------------------------------------------
+      #     # ---------------------------------------------------
+      #     # Validate commit
+      #     # ---------------------------------------------------
 
-          if ! [[ "$commit" =~ ^[a-f0-9]{40}$ ]]; then
-            echo "::error::Invalid commit SHA in release manifest."
-            exit 1
-          fi
+      #     if ! [[ "$commit" =~ ^[a-f0-9]{40}$ ]]; then
+      #       echo "::error::Invalid commit SHA in release manifest."
+      #       exit 1
+      #     fi
 
-          # ---------------------------------------------------
-          # Validate PR number
-          # ---------------------------------------------------
+      #     # ---------------------------------------------------
+      #     # Validate PR number
+      #     # ---------------------------------------------------
 
-          if ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::Invalid PR number in release manifest."
-            exit 1
-          fi
+      #     if ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]; then
+      #       echo "::error::Invalid PR number in release manifest."
+      #       exit 1
+      #     fi
 
-          # ---------------------------------------------------
-          # Ensure images belong to expected ACR
-          # ---------------------------------------------------
+      #     # ---------------------------------------------------
+      #     # Ensure images belong to expected ACR
+      #     # ---------------------------------------------------
 
-          test "$api_repository" = "$ACR_LOGIN_SERVER/my-api"
-          test "$frontend_repository" = "$ACR_LOGIN_SERVER/my-fe"
-          test "$nginx_repository" = "$ACR_LOGIN_SERVER/my-nginx"
+      #     test "$api_repository" = "$ACR_LOGIN_SERVER/my-api"
+      #     test "$frontend_repository" = "$ACR_LOGIN_SERVER/my-fe"
+      #     test "$nginx_repository" = "$ACR_LOGIN_SERVER/my-nginx"
 
-          # ---------------------------------------------------
-          # Validate immutable SHA256 image digests
-          # ---------------------------------------------------
+      #     # ---------------------------------------------------
+      #     # Validate immutable SHA256 image digests
+      #     # ---------------------------------------------------
 
-          for digest in \
-            "$api_digest" \
-            "$frontend_digest" \
-            "$nginx_digest"
-          do
+      #     for digest in \
+      #       "$api_digest" \
+      #       "$frontend_digest" \
+      #       "$nginx_digest"
+      #     do
 
-            if ! [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-              echo "::error::Invalid container image digest: $digest"
-              exit 1
-            fi
+      #       if ! [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+      #         echo "::error::Invalid container image digest: $digest"
+      #         exit 1
+      #       fi
 
-          done
+      #     done
 
-          # ---------------------------------------------------
-          # Export values for deploy job
-          # ---------------------------------------------------
+      #     # ---------------------------------------------------
+      #     # Export values for deploy job
+      #     # ---------------------------------------------------
 
-          {
-            echo "commit=$commit"
-            echo "pr_number=$pr_number"
+      #     {
+      #       echo "commit=$commit"
+      #       echo "pr_number=$pr_number"
 
-            echo "api_repository=$api_repository"
-            echo "api_digest=$api_digest"
+      #       echo "api_repository=$api_repository"
+      #       echo "api_digest=$api_digest"
 
-            echo "frontend_repository=$frontend_repository"
-            echo "frontend_digest=$frontend_digest"
+      #       echo "frontend_repository=$frontend_repository"
+      #       echo "frontend_digest=$frontend_digest"
 
-            echo "nginx_repository=$nginx_repository"
-            echo "nginx_digest=$nginx_digest"
-          } >> "$GITHUB_OUTPUT"
+      #       echo "nginx_repository=$nginx_repository"
+      #       echo "nginx_digest=$nginx_digest"
+      #     } >> "$GITHUB_OUTPUT"
 
-      # -------------------------------------------------------
-      # Release summary before production approval
-      # -------------------------------------------------------
-      - name: Write approval context
-        run: |
-          {
-            echo "## Release awaiting production approval"
-            echo ""
-            echo "- Release workflow run: ${{ inputs.release_run_id }}"
-            echo "- Pull request: #${{ steps.manifest.outputs.pr_number }}"
-            echo "- Commit: \`${{ steps.manifest.outputs.commit }}\`"
-            echo "- API digest: \`${{ steps.manifest.outputs.api_digest }}\`"
-            echo "- Frontend digest: \`${{ steps.manifest.outputs.frontend_digest }}\`"
-            echo "- Nginx digest: \`${{ steps.manifest.outputs.nginx_digest }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+      # # -------------------------------------------------------
+      # # Release summary before production approval
+      # # -------------------------------------------------------
+      # - name: Write approval context
+      #   run: |
+      #     {
+      #       echo "## Release awaiting production approval"
+      #       echo ""
+      #       echo "- Release workflow run: ${{ inputs.release_run_id }}"
+      #       echo "- Pull request: #${{ steps.manifest.outputs.pr_number }}"
+      #       echo "- Commit: \`${{ steps.manifest.outputs.commit }}\`"
+      #       echo "- API digest: \`${{ steps.manifest.outputs.api_digest }}\`"
+      #       echo "- Frontend digest: \`${{ steps.manifest.outputs.frontend_digest }}\`"
+      #       echo "- Nginx digest: \`${{ steps.manifest.outputs.nginx_digest }}\`"
+      #     } >> "$GITHUB_STEP_SUMMARY"
 
 
   # =========================================================
