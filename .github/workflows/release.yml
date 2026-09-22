@@ -20,6 +20,9 @@ env:
   API_IMAGE_NAME: my-api
   FRONTEND_IMAGE_NAME: my-fe
   NGINX_IMAGE_NAME: my-nginx
+  # Docker reference format is repository:<tag>, e.g. my-api:v42.
+  # The run number is monotonically increasing for this workflow.
+  RELEASE_TAG: v${{ github.run_number }}
 
 jobs:
   quality-gate:
@@ -150,41 +153,41 @@ jobs:
       - name: Build release images once
         run: |
           # Dockerfile's final stage is test; production must use runtime.
-          docker build --file backend/Dockerfile --target runtime --tag "$ACR_LOGIN_SERVER/$API_IMAGE_NAME:$GITHUB_SHA" backend
-          docker build --file frontend/Dockerfile --tag "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME:$GITHUB_SHA" frontend
-          docker build --file nginx/Dockerfile --tag "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME:$GITHUB_SHA" nginx
+          docker build --file backend/Dockerfile --target runtime --tag "$ACR_LOGIN_SERVER/$API_IMAGE_NAME:$RELEASE_TAG" backend
+          docker build --file frontend/Dockerfile --tag "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME:$RELEASE_TAG" frontend
+          docker build --file nginx/Dockerfile --tag "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME:$RELEASE_TAG" nginx
       - name: Scan API release image
         uses: aquasecurity/trivy-action@v0.35.0
         with:
-          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
+          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:${{ env.RELEASE_TAG }}
           severity: HIGH,CRITICAL
           exit-code: "0"
           ignore-unfixed: true
       - name: Scan frontend release image
         uses: aquasecurity/trivy-action@v0.35.0
         with:
-          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ env.RELEASE_TAG }}
           severity: HIGH,CRITICAL
           exit-code: "0"
           ignore-unfixed: true
       - name: Scan Nginx release image
         uses: aquasecurity/trivy-action@v0.35.0
         with:
-          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.NGINX_IMAGE_NAME }}:${{ github.sha }}
+          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.NGINX_IMAGE_NAME }}:${{ env.RELEASE_TAG }}
           severity: HIGH,CRITICAL
           exit-code: "0"
           ignore-unfixed: true
       - name: Push images after all quality gates pass
         run: |
-          docker push "$ACR_LOGIN_SERVER/$API_IMAGE_NAME:$GITHUB_SHA"
-          docker push "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME:$GITHUB_SHA"
-          docker push "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME:$GITHUB_SHA"
+          docker push "$ACR_LOGIN_SERVER/$API_IMAGE_NAME:$RELEASE_TAG"
+          docker push "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME:$RELEASE_TAG"
+          docker push "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME:$RELEASE_TAG"
       - name: Resolve immutable ACR digests
         id: digests
         run: |
-          api_digest="$(az acr repository show --name "$ACR_NAME" --image "$API_IMAGE_NAME:$GITHUB_SHA" --query digest --output tsv)"
-          frontend_digest="$(az acr repository show --name "$ACR_NAME" --image "$FRONTEND_IMAGE_NAME:$GITHUB_SHA" --query digest --output tsv)"
-          nginx_digest="$(az acr repository show --name "$ACR_NAME" --image "$NGINX_IMAGE_NAME:$GITHUB_SHA" --query digest --output tsv)"
+          api_digest="$(az acr repository show --name "$ACR_NAME" --image "$API_IMAGE_NAME:$RELEASE_TAG" --query digest --output tsv)"
+          frontend_digest="$(az acr repository show --name "$ACR_NAME" --image "$FRONTEND_IMAGE_NAME:$RELEASE_TAG" --query digest --output tsv)"
+          nginx_digest="$(az acr repository show --name "$ACR_NAME" --image "$NGINX_IMAGE_NAME:$RELEASE_TAG" --query digest --output tsv)"
           for digest in "$api_digest" "$frontend_digest" "$nginx_digest"; do
             [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           done
@@ -204,6 +207,7 @@ jobs:
             --arg pr_number "$PR_NUMBER" \
             --arg run_id "$GITHUB_RUN_ID" \
             --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg image_tag "$RELEASE_TAG" \
             --arg created_at "$(date --utc +%FT%TZ)" \
             --arg api_repository "$ACR_LOGIN_SERVER/$API_IMAGE_NAME" \
             --arg api_digest "${{ steps.digests.outputs.api_digest }}" \
@@ -220,9 +224,9 @@ jobs:
               workflow_run_attempt: ($run_attempt | tonumber),
               created_at: $created_at,
               images: {
-                api: {repository: $api_repository, digest: $api_digest},
-                frontend: {repository: $frontend_repository, digest: $frontend_digest},
-                nginx: {repository: $nginx_repository, digest: $nginx_digest}
+                api: {repository: $api_repository, tag: $image_tag, digest: $api_digest},
+                frontend: {repository: $frontend_repository, tag: $image_tag, digest: $frontend_digest},
+                nginx: {repository: $nginx_repository, tag: $image_tag, digest: $nginx_digest}
               }
             }' > release/release-manifest.json
           (cd release && sha256sum release-manifest.json > checksums.txt)

@@ -62,6 +62,9 @@ nginx:
 
 
 minio:
+  # Development may enable this normally. The initial production deployment
+  # disables it until an in-cluster registry image is configured.
+  enabled: true
   image:
     repository: quay.io/minio/minio
     tag: RELEASE.2025-04-22T22-12-26Z

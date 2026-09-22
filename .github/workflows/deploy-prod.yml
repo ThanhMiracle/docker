@@ -230,11 +230,9 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
 
-          KEY_VAULT_ENABLED: ${{ vars.KEY_VAULT_ENABLED || 'false' }}
-
-          KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
-
-          API_KEYVAULT_CLIENT_ID: ${{ vars.API_KEYVAULT_CLIENT_ID }}
+          # Bootstrap deployments use the existing Kubernetes Secret. Key Vault
+          # is enabled later after its workload identity has been validated.
+          KEY_VAULT_ENABLED: "false"
 
 
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -437,7 +435,7 @@ jobs:
 
         env:
 
-          KEY_VAULT_ENABLED: ${{ vars.KEY_VAULT_ENABLED || 'false' }}
+          KEY_VAULT_ENABLED: "false"
 
           KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
 
@@ -486,6 +484,7 @@ jobs:
             --set-string nginx.image.digest="${{ needs.resolve-release.outputs.nginx_digest }}" \
             --set-string release.commit="${{ needs.resolve-release.outputs.commit }}" \
             --set-string release.workflowRunId="${{ inputs.release_run_id }}" \
+            --set minio.enabled=false \
             "${key_vault_args[@]}" \
             --wait \
             --timeout 10m \
