@@ -182,82 +182,82 @@ jobs:
           printf 'api_digest=%s\n' "$api_digest" >> "$GITHUB_OUTPUT"
           printf 'frontend_digest=%s\n' "$frontend_digest" >> "$GITHUB_OUTPUT"
           printf 'nginx_digest=%s\n' "$nginx_digest" >> "$GITHUB_OUTPUT"
-      - name: Create API SBOM
-        uses: anchore/sbom-action@v0.20.1
-        with:
-          image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
-          format: spdx-json
-          output-file: release/api.sbom.spdx.json
-          upload-artifact: false
-      - name: Create frontend SBOM
-        uses: anchore/sbom-action@v0.20.1
-        with:
-          image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
-          format: spdx-json
-          output-file: release/frontend.sbom.spdx.json
-          upload-artifact: false
-      - name: Create Nginx SBOM
-        uses: anchore/sbom-action@v0.20.1
-        with:
-          image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.NGINX_IMAGE_NAME }}:${{ github.sha }}
-          format: spdx-json
-          output-file: release/nginx.sbom.spdx.json
-          upload-artifact: false
-      - name: Create release evidence manifest
-        env:
-          JIRA_KEY: ${{ needs.quality-gate.outputs.jira_key }}
-          PR_NUMBER: ${{ needs.quality-gate.outputs.pr_number }}
-        run: |
-          mkdir -p release
-          jq -n \
-            --arg commit "$GITHUB_SHA" \
-            --arg jira_key "$JIRA_KEY" \
-            --arg pr_number "$PR_NUMBER" \
-            --arg run_id "$GITHUB_RUN_ID" \
-            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg created_at "$(date --utc +%FT%TZ)" \
-            --arg api_repository "$ACR_LOGIN_SERVER/$API_IMAGE_NAME" \
-            --arg api_digest "${{ steps.digests.outputs.api_digest }}" \
-            --arg frontend_repository "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME" \
-            --arg frontend_digest "${{ steps.digests.outputs.frontend_digest }}" \
-            --arg nginx_repository "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME" \
-            --arg nginx_digest "${{ steps.digests.outputs.nginx_digest }}" \
-            '{
-              schema_version: 1,
-              commit: $commit,
-              jira_key: $jira_key,
-              pull_request: ($pr_number | tonumber),
-              workflow_run_id: ($run_id | tonumber),
-              workflow_run_attempt: ($run_attempt | tonumber),
-              created_at: $created_at,
-              images: {
-                api: {repository: $api_repository, digest: $api_digest},
-                frontend: {repository: $frontend_repository, digest: $frontend_digest},
-                nginx: {repository: $nginx_repository, digest: $nginx_digest}
-              }
-            }' > release/release-manifest.json
-          (cd release && sha256sum release-manifest.json *.sbom.spdx.json > checksums.txt)
-      - name: Publish release evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-evidence
-          path: release/
-          if-no-files-found: error
-          retention-days: 90
-      - name: Publish release summary
-        env:
-          JIRA_KEY: ${{ needs.quality-gate.outputs.jira_key }}
-          PR_NUMBER: ${{ needs.quality-gate.outputs.pr_number }}
-        run: |
-          {
-            echo "## Immutable release artifact"
-            echo ""
-            echo "- Jira: $JIRA_KEY"
-            echo "- Pull request: #$PR_NUMBER"
-            echo "- Commit: \`$GITHUB_SHA\`"
-            echo "- API: \`$ACR_LOGIN_SERVER/$API_IMAGE_NAME@${{ steps.digests.outputs.api_digest }}\`"
-            echo "- Frontend: \`$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME@${{ steps.digests.outputs.frontend_digest }}\`"
-            echo "- Nginx: \`$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME@${{ steps.digests.outputs.nginx_digest }}\`"
-            echo ""
-            echo "Deploy this release with run ID \`$GITHUB_RUN_ID\`."
-          } >> "$GITHUB_STEP_SUMMARY"
+      # - name: Create API SBOM
+      #   uses: anchore/sbom-action@v0.20.1
+      #   with:
+      #     image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:${{ github.sha }}
+      #     format: spdx-json
+      #     output-file: release/api.sbom.spdx.json
+      #     upload-artifact: false
+      # - name: Create frontend SBOM
+      #   uses: anchore/sbom-action@v0.20.1
+      #   with:
+      #     image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+      #     format: spdx-json
+      #     output-file: release/frontend.sbom.spdx.json
+      #     upload-artifact: false
+      # - name: Create Nginx SBOM
+      #   uses: anchore/sbom-action@v0.20.1
+      #   with:
+      #     image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.NGINX_IMAGE_NAME }}:${{ github.sha }}
+      #     format: spdx-json
+      #     output-file: release/nginx.sbom.spdx.json
+      #     upload-artifact: false
+      # - name: Create release evidence manifest
+      #   env:
+      #     JIRA_KEY: ${{ needs.quality-gate.outputs.jira_key }}
+      #     PR_NUMBER: ${{ needs.quality-gate.outputs.pr_number }}
+      #   run: |
+      #     mkdir -p release
+      #     jq -n \
+      #       --arg commit "$GITHUB_SHA" \
+      #       --arg jira_key "$JIRA_KEY" \
+      #       --arg pr_number "$PR_NUMBER" \
+      #       --arg run_id "$GITHUB_RUN_ID" \
+      #       --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+      #       --arg created_at "$(date --utc +%FT%TZ)" \
+      #       --arg api_repository "$ACR_LOGIN_SERVER/$API_IMAGE_NAME" \
+      #       --arg api_digest "${{ steps.digests.outputs.api_digest }}" \
+      #       --arg frontend_repository "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME" \
+      #       --arg frontend_digest "${{ steps.digests.outputs.frontend_digest }}" \
+      #       --arg nginx_repository "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME" \
+      #       --arg nginx_digest "${{ steps.digests.outputs.nginx_digest }}" \
+      #       '{
+      #         schema_version: 1,
+      #         commit: $commit,
+      #         jira_key: $jira_key,
+      #         pull_request: ($pr_number | tonumber),
+      #         workflow_run_id: ($run_id | tonumber),
+      #         workflow_run_attempt: ($run_attempt | tonumber),
+      #         created_at: $created_at,
+      #         images: {
+      #           api: {repository: $api_repository, digest: $api_digest},
+      #           frontend: {repository: $frontend_repository, digest: $frontend_digest},
+      #           nginx: {repository: $nginx_repository, digest: $nginx_digest}
+      #         }
+      #       }' > release/release-manifest.json
+      #     (cd release && sha256sum release-manifest.json *.sbom.spdx.json > checksums.txt)
+      # - name: Publish release evidence
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: release-evidence
+      #     path: release/
+      #     if-no-files-found: error
+      #     retention-days: 90
+      # - name: Publish release summary
+      #   env:
+      #     JIRA_KEY: ${{ needs.quality-gate.outputs.jira_key }}
+      #     PR_NUMBER: ${{ needs.quality-gate.outputs.pr_number }}
+      #   run: |
+      #     {
+      #       echo "## Immutable release artifact"
+      #       echo ""
+      #       echo "- Jira: $JIRA_KEY"
+      #       echo "- Pull request: #$PR_NUMBER"
+      #       echo "- Commit: \`$GITHUB_SHA\`"
+      #       echo "- API: \`$ACR_LOGIN_SERVER/$API_IMAGE_NAME@${{ steps.digests.outputs.api_digest }}\`"
+      #       echo "- Frontend: \`$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME@${{ steps.digests.outputs.frontend_digest }}\`"
+      #       echo "- Nginx: \`$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME@${{ steps.digests.outputs.nginx_digest }}\`"
+      #       echo ""
+      #       echo "Deploy this release with run ID \`$GITHUB_RUN_ID\`."
+      #     } >> "$GITHUB_STEP_SUMMARY"
