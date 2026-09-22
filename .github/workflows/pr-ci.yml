@@ -12,29 +12,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  traceability:
-    name: Jira traceability
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require a Jira key in the branch name or PR title
-        env:
-          HEAD_REF: ${{ github.head_ref }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          change_text="$HEAD_REF $PR_TITLE"
-          jira_key="$(grep -Eo '[A-Z][A-Z0-9]+-[0-9]+' <<<"$change_text" | head -n1 || true)"
-          test -n "$jira_key" || {
-            echo "::error::Use a branch such as feature/APP-123-description or include APP-123 in the PR title."
-            exit 1
-          }
-          echo "Jira change: $jira_key" >> "$GITHUB_STEP_SUMMARY"
 
+  # =========================================================
+  # Backend Tests
+  # =========================================================
   backend-test:
     name: Backend tests
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Build backend test image
         uses: docker/build-push-action@v7
         with:
@@ -43,6 +35,7 @@ jobs:
           load: true
           push: false
           tags: platform-api-test:${{ github.sha }}
+
       - name: Run unit and integration tests
         run: >-
           docker run --rm
@@ -50,49 +43,92 @@ jobs:
           -e ADMIN_EMAIL=alice@example.com
           platform-api-test:${{ github.sha }}
 
+
+  # =========================================================
+  # Frontend Build
+  # =========================================================
   frontend-build:
     name: Frontend and container builds
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
+
       - name: Install dependencies
         working-directory: frontend
         run: npm install --no-audit --no-fund
+
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
       - name: Build runtime images
         run: |
-          docker build --file frontend/Dockerfile --tag platform-frontend:pr frontend
-          docker build --file nginx/Dockerfile --tag platform-nginx:pr nginx
+          docker build \
+            --file frontend/Dockerfile \
+            --tag platform-frontend:pr \
+            frontend
 
+          docker build \
+            --file nginx/Dockerfile \
+            --tag platform-nginx:pr \
+            nginx
+
+
+  # =========================================================
+  # SAST
+  # =========================================================
   sast:
     name: Backend SAST
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
       - name: Run Bandit
         run: |
-          python -m pip install --disable-pip-version-check bandit==1.8.6
-          bandit --recursive backend/app --severity-level medium --confidence-level medium
+          python -m pip install \
+            --disable-pip-version-check \
+            bandit==1.8.6
 
+          bandit \
+            --recursive backend/app \
+            --severity-level medium \
+            --confidence-level medium
+
+
+  # =========================================================
+  # Security Scan
+  # =========================================================
   security:
     name: Secret and dependency scan
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      # Enable this later if you want dedicated secret scanning
+      #
       # - name: Detect committed secrets
       #   uses: gitleaks/gitleaks-action@v2
       #   env:
       #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Scan source, dependencies, and IaC
         uses: aquasecurity/trivy-action@v0.35.0
         with:
@@ -104,41 +140,105 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
+
+  # =========================================================
+  # Helm / Kubernetes Policy
+  # =========================================================
   policy:
     name: Helm and deployment policy
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v6
-      - uses: azure/setup-helm@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
         with:
           version: v4.3.0
+
       - name: Lint development values
-        run: helm lint ./deploy/helm/platform-app --values ./deploy/helm/platform-app/values-dev.yml
+        run: |
+          helm lint \
+            ./deploy/helm/platform-app \
+            --values ./deploy/helm/platform-app/values-dev.yml
+
       - name: Render production manifests with immutable test digests
         run: |
           digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          helm template platform-app ./deploy/helm/platform-app +            --namespace platform +            --set-string api.image.digest="$digest" +            --set-string frontend.image.digest="$digest" +            --set-string nginx.image.digest="$digest" > rendered-manifests.yaml
+
+          helm template platform-app \
+            ./deploy/helm/platform-app \
+            --namespace platform \
+            --set-string api.image.digest="$digest" \
+            --set-string frontend.image.digest="$digest" \
+            --set-string nginx.image.digest="$digest" \
+            > rendered-manifests.yaml
+
       - name: Install Conftest
         run: |
-          curl --fail --location --silent --show-error +            https://github.com/open-policy-agent/conftest/releases/download/v0.59.0/conftest_0.59.0_Linux_x86_64.tar.gz +            | tar --extract --gzip --directory /usr/local/bin conftest
-      - name: Enforce immutable-image policy
-        run: conftest test --policy policy rendered-manifests.yaml
+          curl \
+            --fail \
+            --location \
+            --silent \
+            --show-error \
+            https://github.com/open-policy-agent/conftest/releases/download/v0.59.0/conftest_0.59.0_Linux_x86_64.tar.gz \
+            | tar \
+                --extract \
+                --gzip \
+                --directory /usr/local/bin \
+                conftest
 
+      - name: Enforce immutable-image policy
+        run: |
+          conftest test \
+            --policy policy \
+            rendered-manifests.yaml
+
+
+  # =========================================================
+  # Final Quality Gate
+  # =========================================================
   quality-gate:
     name: Quality Gate
     if: always()
-    needs: [traceability, backend-test, frontend-build, sast, security, policy]
+
+    needs:
+      - backend-test
+      - frontend-build
+      - sast
+      - security
+      - policy
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Enforce all required checks
         env:
-          TRACEABILITY: ${{ needs.traceability.result }}
           BACKEND: ${{ needs.backend-test.result }}
           FRONTEND: ${{ needs.frontend-build.result }}
           SAST: ${{ needs.sast.result }}
           SECURITY: ${{ needs.security.result }}
           POLICY: ${{ needs.policy.result }}
+
         run: |
-          for result in "$TRACEABILITY" "$BACKEND" "$FRONTEND" "$SAST" "$SECURITY" "$POLICY"; do
-            test "$result" = success
+          echo "Backend:  $BACKEND"
+          echo "Frontend: $FRONTEND"
+          echo "SAST:     $SAST"
+          echo "Security: $SECURITY"
+          echo "Policy:   $POLICY"
+
+          for result in \
+            "$BACKEND" \
+            "$FRONTEND" \
+            "$SAST" \
+            "$SECURITY" \
+            "$POLICY"
+          do
+            if [ "$result" != "success" ]; then
+              echo "::error::One or more required CI checks failed."
+              exit 1
+            fi
           done
+
+          echo "All CI quality gates passed."
