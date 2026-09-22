@@ -502,7 +502,8 @@ jobs:
             "$NAMESPACE" \
             "${{ needs.resolve-release.outputs.api_digest }}" \
             "${{ needs.resolve-release.outputs.frontend_digest }}" \
-            "${{ needs.resolve-release.outputs.nginx_digest }}"
+            "${{ needs.resolve-release.outputs.nginx_digest }}" \
+            false
 
 
       # --------------------------------------------------------

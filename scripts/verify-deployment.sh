@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-namespace="${1:?Usage: verify-deployment.sh <namespace> <api-digest> <frontend-digest> <nginx-digest>}"
+namespace="${1:?Usage: verify-deployment.sh <namespace> <api-digest> <frontend-digest> <nginx-digest> [minio-enabled]}"
 api_digest="${2:?Missing API digest}"
 frontend_digest="${3:?Missing frontend digest}"
 nginx_digest="${4:?Missing Nginx digest}"
+minio_enabled="${5:-true}"
 
 validate_digest() {
   [[ "$1" =~ ^sha256:[a-f0-9]{64}$ ]] || {
@@ -42,7 +43,12 @@ verify_workload api "$api_digest"
 verify_workload frontend "$frontend_digest"
 verify_workload nginx "$nginx_digest"
 
-for service in api frontend nginx minio; do
+services=(api frontend nginx)
+if [[ "$minio_enabled" = "true" ]]; then
+  services+=(minio)
+fi
+
+for service in "${services[@]}"; do
   endpoints="$(kubectl get endpoints "$service" --namespace "$namespace" \
     -o jsonpath='{.subsets[*].addresses[*].ip}')"
   [[ -n "$endpoints" ]] || {
@@ -51,4 +57,4 @@ for service in api frontend nginx minio; do
   }
 done
 
-echo "All workloads are Ready, service endpoints exist, and approved image digests are running."
+echo "All enabled workloads are Ready, service endpoints exist, and approved image digests are running."
