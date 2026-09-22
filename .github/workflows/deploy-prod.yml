@@ -89,6 +89,60 @@ jobs:
 
           fi
 
+      # The selected Build Release run is the source of truth for the image
+      # repositories and digests. Do not accept values entered at dispatch time.
+      - name: Download and verify release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/${{ inputs.release_run_id }}")"
+          test "$(jq -r '.name' <<< "$run_json")" = "Build Release" || {
+            echo "::error::release_run_id must belong to the Build Release workflow."
+            exit 1
+          }
+          test "$(jq -r '.conclusion' <<< "$run_json")" = "success" || {
+            echo "::error::The selected Build Release run was not successful."
+            exit 1
+          }
+
+          mkdir -p release
+          gh run download "${{ inputs.release_run_id }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name release-evidence \
+            --dir release
+
+          (cd release && sha256sum --check checksums.txt)
+
+      - name: Read immutable release manifest
+        id: manifest
+        run: |
+          set -euo pipefail
+
+          manifest="release/release-manifest.json"
+          test -f "$manifest" || {
+            echo "::error::release-manifest.json is missing from release evidence."
+            exit 1
+          }
+
+          commit="$(jq -er '.commit | select(test("^[0-9a-f]{40}$"))' "$manifest")"
+          workflow_run_id="$(jq -er '.workflow_run_id | tostring' "$manifest")"
+          test "$workflow_run_id" = "${{ inputs.release_run_id }}" || {
+            echo "::error::The manifest does not belong to the selected release run."
+            exit 1
+          }
+
+          for image in api frontend nginx; do
+            repository="$(jq -er ".images.$image.repository | select(type == \"string\" and length > 0)" "$manifest")"
+            digest="$(jq -er ".images.$image.digest | select(test(\"^sha256:[a-f0-9]{64}$\"))" "$manifest")"
+            printf '%s_repository=%s\n' "$image" "$repository" >> "$GITHUB_OUTPUT"
+            printf '%s_digest=%s\n' "$image" "$digest" >> "$GITHUB_OUTPUT"
+          done
+
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+          printf 'pr_number=%s\n' "$(jq -r '.pull_request // empty' "$manifest")" >> "$GITHUB_OUTPUT"
+
 
   # ==========================================================
   # 2. Deploy Production
