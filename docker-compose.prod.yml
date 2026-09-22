@@ -5,22 +5,22 @@ networks:
 services:
   # Reverse proxy - cổng public duy nhất
   nginx:
-    image: nginx:alpine
+    image: ${NGINX_IMAGE:-thanh2909/my-nginx}:${IMAGE_TAG:-latest}
     container_name: proxy
     depends_on:
       - frontend
       - api
       - minio
     ports:
-      - "80:80" # Your Azure HTTPS gateway/proxy forwards traffic to this port.
+      - "80:8080" # Your Azure HTTPS gateway/proxy forwards traffic to this port.
     volumes:
-      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
     networks:
     - appnet
     restart: unless-stopped
     init: true
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
