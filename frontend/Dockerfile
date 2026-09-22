@@ -3,7 +3,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm install --no-audit --no-fund
 
 COPY . .
 
@@ -14,7 +14,7 @@ RUN npm run build   # tạo /app/dist
 
 
 # ---------- Stage 2: non-root runtime nginx ----------
-FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:stable-alpine AS runtime
 
 # dist FE sẽ nằm ở /usr/share/nginx/html
 WORKDIR /usr/share/nginx/html

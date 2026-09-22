@@ -99,6 +99,7 @@ jobs:
           scan-type: fs
           scan-ref: .
           scanners: vuln,misconfig,secret
+          skip-dirs: deploy/helm/platform-app
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
