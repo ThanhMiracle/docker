@@ -1,11 +1,17 @@
 #!/bin/sh
 
-# tạo file env.js mỗi lần container start
+set -e
+
+echo "Generating runtime env.js..."
+echo "API_BASE=${API_BASE}"
+
 cat > /usr/share/nginx/html/env.js <<EOF
 window.__ENV__ = {
   API_BASE: "${API_BASE}"
 };
 EOF
 
-# chạy nginx (CMD của Dockerfile sẽ được nối vào đây qua exec "$@")
+echo "Generated env.js:"
+cat /usr/share/nginx/html/env.js
+
 exec "$@"
