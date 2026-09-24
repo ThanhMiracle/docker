@@ -1,0 +1,50 @@
+name: Notify Jira
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  jira:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send commit to Jira
+        env:
+          JIRA_URL: ${{ secrets.JIRA_URL }}
+          JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+
+        run: |
+          MESSAGE="${{ github.event.head_commit.message }}"
+          AUTHOR="${{ github.event.head_commit.author.name }}"
+          COMMIT_URL="${{ github.event.head_commit.url }}"
+
+          echo "Commit message: $MESSAGE"
+
+          ISSUE_KEY=$(echo "$MESSAGE" | grep -oE 'VNNAG-[0-9]+' | head -1 || true)
+
+          if [ -z "$ISSUE_KEY" ]; then
+            echo "Commit không có Jira issue VNNAG-x"
+            exit 0
+          fi
+
+          echo "Found Jira issue: $ISSUE_KEY"
+
+          COMMENT="Commit mới từ GitHub:
+
+          * Message: $MESSAGE
+          * Author: $AUTHOR
+          * URL: $COMMIT_URL"
+
+          PAYLOAD=$(jq -n \
+            --arg body "$COMMENT" \
+            '{body: $body}')
+
+          curl \
+            --fail \
+            --request POST \
+            --url "${JIRA_URL}/rest/api/2/issue/${ISSUE_KEY}/comment" \
+            --header "Authorization: Bearer ${JIRA_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data "$PAYLOAD"
