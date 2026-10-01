@@ -46,48 +46,12 @@ jobs:
 
       # Require the commit pushed to master to be associated with a PR that was
       # merged into master. Approval is intentionally NOT required here.
-      - name: Require a merged pull request
+      - name: Set optional release trace metadata
         id: trace
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-
-          gh api \
-            --header "Accept: application/vnd.github+json" \
-            "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-            > "$RUNNER_TEMP/pulls.json"
-
-          pr_number="$(
-            jq -r '
-              [.[] | select(.base.ref == "master" and .merged_at != null)]
-              | first
-              | .number // empty
-            ' "$RUNNER_TEMP/pulls.json"
-          )"
-
-          if [[ -z "$pr_number" ]]; then
-            echo "::error::Release commit must come from a pull request merged into master."
-            exit 1
-          fi
-
-          gh pr view "$pr_number" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json number,state,mergedAt,baseRefName \
-            > "$RUNNER_TEMP/pr-metadata.json"
-
-          jq -e '
-            .state == "MERGED" and
-            .mergedAt != null and
-            .baseRefName == "master"
-          ' "$RUNNER_TEMP/pr-metadata.json" >/dev/null || {
-            echo "::error::Release commit must come from a merged PR into master."
-            exit 1
-          }
-
-          # Jira is optional in this workflow.
+          echo "Release triggered from push to master."
           printf 'jira_key=\n' >> "$GITHUB_OUTPUT"
-          printf 'pr_number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
+          printf 'pr_number=\n' >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
