@@ -17,11 +17,14 @@ spec:
         {{- with .Values.release.commit }}
         devops.platform/commit: {{ . | quote }}
         {{- end }}
-        {{- with .Values.release.jiraKey }}
-        devops.platform/jira-key: {{ . | quote }}
+        {{- with .Values.release.prNumber }}
+        devops.platform/pr-number: {{ . | quote }}
         {{- end }}
         {{- with .Values.release.workflowRunId }}
         devops.platform/workflow-run-id: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.release.deploymentRunId }}
+        devops.platform/deployment-run-id: {{ . | quote }}
         {{- end }}
       labels:
         app: api

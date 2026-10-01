@@ -98,8 +98,9 @@ secrets:
 # Correlation metadata written onto the production Pods by deploy-prod.yml.
 release:
   commit: ""
-  jiraKey: ""
+  prNumber: ""
   workflowRunId: ""
+  deploymentRunId: ""
 
 # Azure Key Vault integration for DATABASE_URL. Set enabled to true only after
 # the AKS Key Vault CSI driver and Workload Identity have been configured.
