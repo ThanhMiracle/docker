@@ -1,147 +1,122 @@
 # GitHub Actions CI/CD for ACR and AKS
 
-The application delivery flow uses GitHub Pull Requests as the authoritative
-change record. It does not depend on Jira or another external ticketing system.
+Luồng này tách riêng bốn trách nhiệm:
 
-## Workflow boundaries
+1. `pr-ci.yml`: kiểm tra Jira traceability, test, build, SAST, secret/dependency scan và Helm policy trên pull request.
+2. `release.yml`: chạy lại quality gate trên commit đã merge, build ba image đúng một lần, scan, push ACR, lấy digest và xuất SBOM/evidence.
+3. `deploy-prod.yml`: tải evidence theo release run ID, chờ approval của GitHub Environment, đăng nhập Azure bằng OIDC và deploy đúng digest bằng Helm.
+4. `rollback-prod.yml`: sau quyết định của con người, xác minh revision chứa đúng artifact cũ rồi rollback và chạy lại verification.
 
-1. `pr-ci.yml` validates the PR change record, tests and coverage, frontend and
-   container builds, SAST, dependency/secret/configuration scans, Helm rendering,
-   and immutable-image policy.
-2. `release.yml` accepts only a commit associated with an approved PR merged into
-   `master`. It reruns the quality gate, builds the three release images once,
-   smoke-tests those exact images, blocks on HIGH/CRITICAL image findings, pushes
-   them to ACR, and records immutable digests.
-3. The release workflow creates a CycloneDX SBOM and signed SLSA provenance for
-   each image. `release-evidence` contains those files, coverage, PR metadata,
-   a release manifest, and checksums.
-4. `deploy-prod.yml` verifies the selected Build Release run and every evidence
-   checksum, waits at the protected `production` environment, uses Azure OIDC,
-   and deploys only the recorded digests.
-5. `rollback-prod.yml` requires a human reason and protected-environment approval,
-   verifies that the selected Helm revision contains the chosen release digests,
-   restores it, and repeats verification.
+Workflow không tự rollback khi verification production thất bại. Log và event được thu thập để người có thẩm quyền chọn rollback, recovery, roll-forward hoặc pause.
 
-Production verification failure never triggers an automatic rollback. The
-workflow captures diagnostics and leaves rollback, recovery, pause, or
-roll-forward to an authorized person.
+## 1. Repository rules
 
-## Required repository rules
+Cấu hình ruleset cho nhánh `master`:
 
-Configure a ruleset for `master`:
-
-- Require a pull request before merging.
-- Require at least one approval and dismiss stale approvals.
+- Require pull request và ít nhất một approval.
 - Require conversation resolution.
-- Require `PR CI / Quality Gate`.
-- Require approval from CODEOWNERS after `.github/CODEOWNERS` is populated with
-  the real application and platform teams.
-- Block force pushes and branch deletion.
-- Do not allow bypass except through an audited break-glass process.
+- Require status check `PR CI / Quality Gate`.
+- Require CODEOWNERS review sau khi tạo `.github/CODEOWNERS` với GitHub team thực tế.
+- Chặn force push và branch deletion.
+- Không cho phép bypass ngoại trừ tài khoản break-glass được kiểm soát.
 
-The release workflow also fails if a `master` commit is not associated with an
-approved, merged PR. This is defense in depth and is not a replacement for the
-repository ruleset.
+Tên branch hoặc tiêu đề PR phải chứa Jira key, ví dụ
+`feature/APP-123-update-auth`.
 
-## Required production environment protection
+## 2. GitHub variables và secrets
 
-Create or update the GitHub Environment named `production`:
+Repository variables dùng cho release:
 
-- Add one or more authorized required reviewers. Reviewers should be independent
-  from the person initiating the deployment when separation of duties is required.
-- Enable prevention of self-review.
-- Restrict deployment branches to protected branches, or explicitly to `master`.
-- Store production-only variables and secrets in this environment.
-
-Both deploy and rollback jobs reference this environment. Without these settings,
-the YAML alone cannot provide human production approval.
-
-## Repository variables
-
-| Variable | Purpose |
+| Variable | Ý nghĩa |
 |---|---|
-| `ACR_NAME` | ACR name without `.azurecr.io` |
-| `ACR_LOGIN_SERVER` | For example `myacr.azurecr.io` |
-| `AZURE_BUILD_CLIENT_ID` | OIDC identity that can push only to the application ACR |
-| `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `ACR_NAME` | Tên ACR, không gồm `.azurecr.io` |
+| `ACR_LOGIN_SERVER` | Ví dụ `myacr.azurecr.io` |
+| `AZURE_BUILD_CLIENT_ID` | Client ID của identity chỉ có quyền push ACR |
+| `AZURE_TENANT_ID` | Microsoft Entra tenant |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription |
 
-## Production environment variables and secrets
+Tạo GitHub Environment tên `production`, bật Required reviewers và chỉ cho
+deploy từ `master`. Khai báo các environment variables:
 
-Variables:
-
-| Variable | Purpose |
+| Variable | Ý nghĩa |
 |---|---|
-| `AZURE_DEPLOY_CLIENT_ID` | OIDC identity used only for AKS deployment |
-| `AKS_RESOURCE_GROUP` | AKS resource group |
-| `AKS_NAME` | AKS cluster name |
-| `K8S_NAMESPACE` | Existing target namespace; defaults to `platform` |
-| `INTERNAL_SMOKE_URL` | In-cluster Nginx URL; defaults to `http://nginx` |
-| `PROD_SMOKE_TEST_URL` | Optional public HTTPS URL |
-| `KEY_VAULT_ENABLED` | `true` or `false` |
-| `KEY_VAULT_NAME` | Required when Key Vault is enabled |
-| `API_KEYVAULT_CLIENT_ID` | API workload identity client ID |
+| `AZURE_DEPLOY_CLIENT_ID` | Client ID của identity deploy AKS |
+| `AKS_RESOURCE_GROUP` | Resource group của AKS |
+| `AKS_NAME` | Tên AKS |
+| `K8S_NAMESPACE` | Mặc định `platform` |
+| `PROD_SMOKE_TEST_URL` | URL HTTPS public, không có dấu `/` cuối |
+| `KEY_VAULT_ENABLED` | `true` hoặc `false` |
+| `KEY_VAULT_NAME` | Bắt buộc khi Key Vault được bật |
+| `API_KEYVAULT_CLIENT_ID` | Workload Identity client ID của API |
 
 Environment secrets:
 
-- `DATABASE_URL` when Key Vault is disabled.
+- `DATABASE_URL`: bắt buộc khi `KEY_VAULT_ENABLED=false`; khi bật Key Vault, secret này có thể để trống.
 - `JWT_SECRET`, `ADMIN_EMAIL`.
 - `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`.
 - `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`.
-- Optional `ALERT_WEBHOOK_URL`.
+- `ALERT_WEBHOOK_URL` là tùy chọn.
 
-Do not create `AZURE_CLIENT_SECRET` or a long-lived kubeconfig secret.
+Không tạo `AZURE_CLIENT_SECRET` hoặc `KUBECONFIG_B64`.
 
-## OIDC and least privilege
+## 3. OIDC và least privilege
 
-Use separate federated identities:
+Tạo hai app registration hoặc user-assigned managed identity độc lập.
 
-- Build identity subject: `repo:<org>/<repo>:ref:refs/heads/master`; grant
-  `AcrPush` only at the application ACR scope.
-- Production identity subject:
-  `repo:<org>/<repo>:environment:production`; grant AKS cluster-user access and
-  a namespace-scoped Kubernetes/Azure RBAC writer role. Do not grant ACR push.
-- AKS kubelet identity needs `AcrPull` on the application ACR.
-- API workload identity needs `Key Vault Secrets User` only on its application
-  vault when Key Vault integration is enabled.
+Build identity:
 
-The `platform` namespace must exist before deployment. The workflow deliberately
-does not create namespaces so the deploy identity can remain namespace-scoped.
+- Federated subject: `repo:<org>/<repo>:ref:refs/heads/master`.
+- Role `AcrPush` chỉ tại scope ACR.
 
-## Release and production approval
+Production deploy identity:
 
-1. Open a PR and complete every field in the PR template.
-2. Obtain an authorized approval and pass `PR CI / Quality Gate`.
-3. Merge into `master`; direct pushes cannot produce a release.
-4. Wait for `Build Release` to produce `release-evidence` successfully.
-5. Dispatch `Deploy Production` from `master` with that Build Release run ID.
-6. The production reviewer checks the PR, coverage and scan results, image
-   digests, SBOMs, provenance, and rollback plan before approving the environment.
-7. The deployment verifies rollout, service endpoints, the running image IDs,
-   API health, database readiness, and the optional public route.
+- Federated subject: `repo:<org>/<repo>:environment:production`.
+- Role `Azure Kubernetes Service Cluster User Role` tại scope AKS.
+- Với AKS Azure RBAC, cấp thêm `Azure Kubernetes Service RBAC Writer` tại scope phù hợp. Với Kubernetes RBAC, tạo RoleBinding giới hạn trong namespace `platform`.
+- Không cấp quyền push ACR.
 
-The release identity is:
+AKS kubelet identity cần `AcrPull` tại scope ACR. API Workload Identity cần
+`Key Vault Secrets User` chỉ trên vault chứa secret ứng dụng.
 
-```text
-Pull request
-  -> approved commit
-  -> Build Release run
-  -> ACR image digests
-  -> SBOM + signed provenance + checksums
-  -> production environment approval
-  -> deployment run
-  -> running image IDs + verification result
-```
+## 4. Release và deploy
 
-## Rollback
+1. Tạo branch có Jira key, mở PR và hoàn thành review.
+2. Merge vào `master`; workflow `Build Release` tạo artifact
+   `release-evidence` gồm manifest, ba SBOM và checksum.
+3. Lấy run ID từ summary của workflow thành công.
+4. Chạy `Deploy Production` với `release_run_id` và Jira key ghi trong manifest.
+5. Reviewer kiểm tra Jira, PR, scan, SBOM và các digest ở job
+   `Validate release evidence`, sau đó approve environment `production`.
+6. Workflow deploy đúng ba reference dạng `repository@sha256:...`, kiểm tra rollout, readiness database, service endpoints, smoke test và digest thực tế trên Pod.
 
-After a human decides to roll back, dispatch `Rollback Production` from `master`
-with:
+Manifest release là liên kết giữa Jira key, PR, commit, workflow run, image
+digests và SBOM. Deployment ghi commit, Jira key và release run ID vào Pod
+annotations; GitHub Environment và Azure Activity Log giữ evidence approval và
+identity thực thi.
 
-- the Build Release run ID of the stable artifact;
-- the Helm revision containing that artifact;
-- the decision rationale.
+## 5. Failure và rollback
 
-The workflow validates the old release evidence and Helm manifest before making a
-change. It then repeats rollout, endpoint, digest, dependency, and smoke checks.
-Rollback evidence is retained as a separate workflow artifact.
+Nếu verification thất bại, không chạy lại release và không build image mới.
+Người vận hành xem diagnostics rồi quyết định:
+
+- recovery hoặc roll-forward;
+- pause để điều tra;
+- chạy `Rollback Production`.
+
+Rollback cần:
+
+- Jira change/incident cho quyết định rollback;
+- Helm revision đích;
+- Build Release run ID của artifact cần khôi phục;
+- lý do quyết định.
+
+Workflow xác minh manifest của Helm revision chứa đúng ba digest từ release
+evidence trước khi rollback, sau đó chạy lại toàn bộ rollout, readiness, endpoint,
+smoke và digest verification.
+
+## 6. Lưu ý về secret đã từng commit
+
+File production `.env` phải nằm ngoài Git. Nếu credential đã từng xuất hiện
+trong lịch sử repository, hãy rotate/revoke credential trước, sau đó purge lịch
+sử bằng quy trình được tổ chức phê duyệt. Xóa file ở commit mới không làm secret
+biến mất khỏi các commit cũ.

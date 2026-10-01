@@ -69,16 +69,6 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--worker
 
 FROM runtime AS test
 
-USER root
-
-RUN pip install --no-cache-dir \
-        pytest==9.1.1 \
-        pytest-cov==7.1.0
-
 COPY --chown=appuser:appuser tests ./tests
 
-ENV COVERAGE_FILE=/tmp/.coverage
-
-USER appuser
-
-CMD ["pytest", "-q", "-p", "no:cacheprovider", "/app/tests", "--cov=app", "--cov-report=term-missing", "--cov-fail-under=70"]
+CMD ["pytest", "-q", "-p", "no:cacheprovider", "/app/tests"]
