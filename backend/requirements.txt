@@ -8,6 +8,7 @@ python-jose[cryptography]
 pydantic
 email-validator
 azure-storage-blob
+azure-identity
 boto3
 httpx
 pytest

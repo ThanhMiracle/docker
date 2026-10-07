@@ -28,7 +28,9 @@ COPY --chmod=755 --chown=nginx:nginx docker-entrypoint.sh /docker-entrypoint.sh
 # Create env.js beforehand and give nginx permission to modify it
 USER root
 
-RUN touch /usr/share/nginx/html/env.js \
+# Normalize shell line endings when building from a Windows checkout.
+RUN sed -i 's/\r$//' /docker-entrypoint.sh \
+    && touch /usr/share/nginx/html/env.js \
     && chown nginx:nginx /usr/share/nginx/html/env.js
 
 USER nginx

@@ -3,10 +3,12 @@
 import os
 import uuid
 import json
+from functools import lru_cache
 from urllib.parse import quote
 
 import boto3
 from azure.core.exceptions import ResourceExistsError
+from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -22,31 +24,52 @@ MINIO_AUTO_CREATE_BUCKET = os.getenv("MINIO_AUTO_CREATE_BUCKET", "").lower() in 
     "1", "true", "yes"
 }
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-AZURE_STORAGE_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER")
+AZURE_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL", "").strip()
+AZURE_STORAGE_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "products")
+AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID", "").strip()
+AZURE_STORAGE_AUTO_CREATE_CONTAINER = os.getenv(
+    "AZURE_STORAGE_AUTO_CREATE_CONTAINER", "false"
+).lower() in {"1", "true", "yes"}
 # Optional CDN or public-container URL, for example https://cdn.example.com/products.
 AZURE_BLOB_PUBLIC_URL = os.getenv("AZURE_BLOB_PUBLIC_URL", "")
+# Stable browser URL through the API for blobs in a private container.
+AZURE_BLOB_PROXY_URL = os.getenv("AZURE_BLOB_PROXY_URL", "/api/files/images")
+
+
+@lru_cache(maxsize=1)
+def _azure_service_client():
+    if AZURE_STORAGE_ACCOUNT_URL:
+        # Reuse the credential/client so access tokens and HTTP connections are cached.
+        credential = DefaultAzureCredential(
+            managed_identity_client_id=AZURE_CLIENT_ID or None,
+        )
+        return BlobServiceClient(
+            account_url=AZURE_STORAGE_ACCOUNT_URL, credential=credential,
+        )
+    if AZURE_STORAGE_CONNECTION_STRING:
+        return BlobServiceClient.from_connection_string(
+            AZURE_STORAGE_CONNECTION_STRING,
+        )
+    raise RuntimeError(
+        "AZURE_STORAGE_ACCOUNT_URL is required for managed identity "
+        "(or set AZURE_STORAGE_CONNECTION_STRING for connection-string authentication)"
+    )
 
 
 def _azure_container_client():
-    if not AZURE_STORAGE_CONNECTION_STRING:
-        raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING is required")
     if not AZURE_STORAGE_CONTAINER:
         raise RuntimeError("AZURE_STORAGE_CONTAINER is required")
-
-    service = BlobServiceClient.from_connection_string(
-        AZURE_STORAGE_CONNECTION_STRING
-    )
-    container = service.get_container_client(AZURE_STORAGE_CONTAINER)
-    try:
-        container.create_container()
-    except ResourceExistsError:
-        pass
-    return container
+    return _azure_service_client().get_container_client(AZURE_STORAGE_CONTAINER)
 
 
 def _put_azure_blob(file_bytes: bytes, content_type: str, ext: str) -> str:
     key = f"products/{uuid.uuid4().hex}{ext}"
     container = _azure_container_client()
+    if AZURE_STORAGE_AUTO_CREATE_CONTAINER:
+        try:
+            container.create_container()
+        except ResourceExistsError:
+            pass
     blob = container.get_blob_client(key)
     blob.upload_blob(
         file_bytes,
@@ -57,7 +80,21 @@ def _put_azure_blob(file_bytes: bytes, content_type: str, ext: str) -> str:
 
     if AZURE_BLOB_PUBLIC_URL:
         return f"{AZURE_BLOB_PUBLIC_URL.rstrip('/')}/{quote(key, safe='/')}"
-    return blob.url
+    return f"{AZURE_BLOB_PROXY_URL.rstrip('/')}/{quote(key, safe='/')}"
+
+
+def get_image(key: str):
+    """Read an uploaded Blob through the API, without making its container public."""
+    if STORAGE_BACKEND != "azure":
+        raise ValueError("Blob image reads require the Azure storage backend")
+    # Only expose the upload namespace, never other objects in the container.
+    if not key.startswith("products/") or any(
+        part in {"", ".", ".."} for part in key.split("/")
+    ):
+        raise ValueError("Invalid image key")
+    download = _azure_container_client().get_blob_client(key).download_blob()
+    content_type = download.properties.content_settings.content_type
+    return download.chunks(), content_type or "application/octet-stream", download.size
 
 
 def _minio_client():
