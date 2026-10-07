@@ -1,9 +1,9 @@
 services:
   api:
-    image: thanh2909/my-api:v0.4
-    # build:
-    #   context: ./backend
-    #   target: runtime
+    # image: thanh2909/my-api:v0.4
+    build:
+      context: ./backend
+      target: runtime
     container_name: backend
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/mydb
@@ -30,7 +30,7 @@ services:
       - appnet
 
   frontend:
-    image: thanh2909/my-fe:v0.4
+    # image: thanh2909/my-fe:v0.4
     build: ./frontend
     container_name: frontend
     environment:
@@ -44,7 +44,7 @@ services:
       - appnet
 
   nginx:
-    image: platform-nginx:local
+    # image: platform-nginx:local
     build: ./nginx
     container_name: proxy
     depends_on: [frontend, api]
@@ -66,7 +66,7 @@ services:
       - appnet
 
   minio:
-    image: quay.io/minio/minio:latest
+    build: ./minio
     container_name: minio
     command: server /data --console-address ":9001"
     environment:

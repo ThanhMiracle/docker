@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from azure.core.exceptions import AzureError, ResourceNotFoundError
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -235,6 +237,27 @@ def logout(user=Depends(get_current_user)):
 # =========================
 # FILES
 # =========================
+
+@app.get("/files/images/{key:path}")
+def read_image(key: str):
+    # Product images are visible to shop visitors; Azure credentials stay server-side.
+    try:
+        chunks, content_type, size = storage.get_image(key)
+    except (ValueError, ResourceNotFoundError):
+        raise HTTPException(status_code=404, detail="Image not found")
+    except (AzureError, RuntimeError):
+        logger.exception("Blob image read failed")
+        raise HTTPException(status_code=503, detail="Image storage unavailable")
+    return StreamingResponse(
+        chunks,
+        media_type=content_type,
+        headers={
+            "Content-Length": str(size),
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+        },
+    )
+
 
 @app.post("/files/upload")
 async def upload_file(

@@ -1,11 +1,17 @@
-# Simple Fullstack Docker — v3-fix (Amazon S3)
-Features: JWT auth, Products CRUD + ownership, My Products, real image uploads to Amazon S3, SPA frontend.
+# Simple Fullstack Docker — v3-fix (Azure Blob Storage)
+Features: JWT auth, Products CRUD + ownership, My Products, real image uploads to Azure Blob Storage in production, SPA frontend.
 
 ## Run
 
 ```bash
 docker compose up --build
 ```
+
+MinIO is built locally from a pinned commit of the official source using
+`minio/Dockerfile`, because the community container images are unavailable.
+The first build downloads Go dependencies and can take several minutes.
+The development Compose file uses this build; local MinIO data stays in
+`minio_data`. Production uses Azure Blob Storage.
 
 Open:
 - Frontend: http://localhost:3000
@@ -40,7 +46,7 @@ This project is a simple fullstack web application demonstrating modern developm
 
 - **Backend:** FastAPI (Python) REST API with JWT authentication, user registration/login, and CRUD operations for products. Each product is owned by a user.
 - **Frontend:** Single Page Application (SPA) built with React and esbuild, providing a user-friendly interface for authentication and product management.
-- **Image Uploads:** Real image uploads are stored in Amazon S3.
+- **Image Uploads:** Production image uploads are stored in Azure Blob Storage; local development uses MinIO.
 - **DevOps:** The frontend, backend, and database are orchestrated with Docker Compose.
 - **Testing:** Backend tests are written with pytest and can be run inside the API container.
 - **Infrastructure as Code:** Terraform scripts are included for provisioning cloud infrastructure if you want to deploy the stack outside local Docker.
@@ -88,37 +94,79 @@ docker exec proxy nginx -s reload || docker restart proxy
 - JWT_SECRET=
 - JWT_EXPIRE_MINUTES=
 
-### Amazon S3
-- AWS_REGION=ap-southeast-1
-- AWS_S3_BUCKET=your-upload-bucket
-- AWS_ACCESS_KEY_ID=
-- AWS_SECRET_ACCESS_KEY=
-- AWS_SESSION_TOKEN= (only for temporary credentials)
+### Azure Blob Storage (production)
 
-On EC2/ECS, prefer an IAM role and omit the three credential variables. The role
-needs `s3:PutObject` on `arn:aws:s3:::your-upload-bucket/*`.
+Production uploads use Azure Blob Storage with the VM or Container App's existing
+managed identity. Set these environment variables on the API container:
 
-### Public image URLs
-- AWS_S3_PUBLIC_URL= (optional CloudFront/custom base URL)
+```env
+STORAGE_BACKEND=azure
+AZURE_STORAGE_ACCOUNT_URL=https://your-account.blob.core.windows.net
+AZURE_STORAGE_CONTAINER=products
+AZURE_CLIENT_ID=
+AZURE_STORAGE_AUTO_CREATE_CONTAINER=false
+AZURE_STORAGE_CONNECTION_STRING=
+AZURE_BLOB_PUBLIC_URL=
+AZURE_BLOB_PROXY_URL=/api/files/images
+```
 
-If `AWS_S3_PUBLIC_URL` is omitted, the API returns the standard regional S3 URL.
-The bucket/object must be publicly readable for browsers to display that URL.
-For a private bucket, put CloudFront in front of it and set `AWS_S3_PUBLIC_URL`
-to the distribution URL.
+The backend uses `DefaultAzureCredential` with the account URL. Leave
+`AZURE_CLIENT_ID` blank for a system-assigned identity; set it to the client ID
+of your assigned user identity when needed. No account key or connection string
+is needed. See [Azure passwordless Blob authentication](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-quickstart-blobs-python).
+
+Use your existing container. Container creation is disabled by default so the
+API only needs its already-granted Blob read/write permissions. Set
+`AZURE_STORAGE_AUTO_CREATE_CONTAINER=true` only if you want the API to create a
+missing container and the identity has permission to do so.
+
+Without `AZURE_BLOB_PUBLIC_URL`, uploads return stable API URLs such as
+`/api/files/images/products/<object-key>`. The backend streams these objects
+using the same identity, so the Blob container can stay private. Uploaded images
+remain accessible to shop visitors through the API, like the previous MinIO
+image URLs. A public CDN/custom base URL (including its container path) can be
+set in `AZURE_BLOB_PUBLIC_URL` to bypass the API for image delivery.
+
+With Compose/Nginx, use the default `AZURE_BLOB_PROXY_URL=/api/files/images`.
+For a Container App exposing FastAPI directly, set it to the browser-reachable
+API URL plus `/files/images`, for example
+`https://your-api.example.com/files/images`. Azure Container Apps supplies its
+managed identity endpoint to the container automatically. VM Docker containers
+must be able to reach the VM's managed identity endpoint.
+
+Connection-string authentication remains available when
+`AZURE_STORAGE_ACCOUNT_URL` is empty. Keep `AZURE_STORAGE_CONNECTION_STRING`
+in deployment secrets. When an account URL is provided, identity authentication
+takes precedence.
+
+Rebuild and publish the API image from `backend/` to include `azure-identity`
+and the new image-read route before deploying it.
+
+To deploy after configuring the environment:
+
+```bash
+docker compose --env-file .env -f docker-compose.prod.yml config --quiet
+docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+Existing MinIO uploads and database image URLs are not migrated by this change.
+Copy the objects to Blob Storage and update their saved URLs before removing the
+old MinIO deployment. Keep the existing MinIO volume until migration is verified.
+
+See [Azure Blob read access](https://learn.microsoft.com/en-us/azure/storage/blobs/anonymous-read-access-overview)
+for access configuration.
 
 ### Local MinIO testing
 
-The default `docker-compose.yml` uses MinIO automatically while production
-continues to use AWS S3:
+The default `docker-compose.yml` continues to use MinIO:
 
 ```bash
 docker compose up --build
 ```
 
 Local uploads use the `uploads` bucket and are available through
-`http://localhost:9008/uploads/<object-key>`. You do not need AWS credentials
-for local testing. `docker-compose.prod.yml` explicitly disables the custom S3
-endpoint and bucket auto-creation.
+`http://localhost/uploads/<object-key>`. No Azure credentials are needed for
+local testing.
 
 ### Production database (Amazon RDS)
 
