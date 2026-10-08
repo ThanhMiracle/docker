@@ -118,8 +118,7 @@ jobs:
               --name "$app" --resource-group "$RESOURCE_GROUP" \
               --output json --only-show-errors)"
 
-            # Only change the image; keep the configured ingress, pull identity,
-            # secrets, ports and single-revision traffic policy intact.
+            # Keep configured ingress, pull identity, secrets, ports and traffic policy.
             jq -e --arg container "$container" --arg registry "$ACR_LOGIN_SERVER" --argjson port "$port" '
               .properties.configuration.activeRevisionsMode == "Single" and
               .properties.configuration.ingress.targetPort == $port and
@@ -146,6 +145,12 @@ jobs:
             environment_internal="$(jq -r '.properties.vnetConfiguration.internal // false' <<< "$environment_json")"
             public_network_access="$(jq -r '.properties.publicNetworkAccess // "Enabled"' <<< "$environment_json")"
             ingress_external="$(jq -r '.properties.configuration.ingress.external // false' <<< "$app_json")"
+            fqdn="$(jq -er '
+              .properties.configuration.ingress.fqdn
+              | select(type == "string" and length > 0)
+            ' <<< "$app_json")"
+            # Browser routing still needs an origin for private environments.
+            printf '%s_origin=https://%s\n' "$output" "$fqdn" >> "$GITHUB_OUTPUT"
 
             if [[ "$environment_internal" == "true" ]]; then
               echo "::notice::$app is in an internal Container Apps environment; skipping public HTTP smoke tests."
@@ -154,10 +159,6 @@ jobs:
             elif [[ "$ingress_external" != "true" ]]; then
               echo "::notice::$app uses app-internal ingress; skipping public HTTP smoke tests."
             else
-              fqdn="$(jq -er '
-                .properties.configuration.ingress.fqdn
-                | select(type == "string" and length > 0)
-              ' <<< "$app_json")"
               url="https://$fqdn"
               echo "Public smoke test is enabled for $app: $url"
             fi
@@ -176,18 +177,27 @@ jobs:
           FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
           BACKEND_URL: ${{ steps.apps.outputs.backend_url }}
           FRONTEND_URL: ${{ steps.apps.outputs.frontend_url }}
+          FRONTEND_API_BASE: ${{ vars.CONTAINER_APPS_API_BASE || steps.apps.outputs.backend_origin }}
         run: |
           set -euo pipefail
+          test -n "$FRONTEND_API_BASE"
 
           deploy_app() {
             local app="$1" container="$2" image="$3" output="$4" url="$5"
             local suffix="gh${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
             local revision revision_json app_json state
             local -a paths
+            local -a runtime_args=()
+
+            if [[ "$output" == "frontend" ]]; then
+              # Separate Container Apps do not have the Compose /api reverse proxy.
+              runtime_args=(--set-env-vars "API_BASE=$FRONTEND_API_BASE")
+            fi
 
             revision="$(az containerapp update \
               --name "$app" --resource-group "$RESOURCE_GROUP" \
               --container-name "$container" --image "$image" \
+              "${runtime_args[@]}" \
               --revision-suffix "$suffix" \
               --query properties.latestRevisionName --output tsv --only-show-errors)"
 
@@ -238,7 +248,7 @@ jobs:
             if [[ "$output" == "backend" ]]; then
               paths=(/health /ready)
             else
-              paths=(/ /env.js)
+              paths=(/)
             fi
 
             for path in "${paths[@]}"; do
@@ -248,9 +258,22 @@ jobs:
                 --output /dev/null "$url$path"
               echo "Smoke test passed: $app $path"
             done
+
+            if [[ "$output" == "frontend" ]]; then
+              # HTTP 200 alone can conceal an empty or cached runtime configuration.
+              curl --fail --silent --show-error --location \
+                --connect-timeout 10 --max-time 30 \
+                --retry 5 --retry-delay 10 --retry-all-errors \
+                --output "$RUNNER_TEMP/frontend-env.js" "$url/env.js?deployment=$suffix"
+              grep -F -- "\"$FRONTEND_API_BASE\"" "$RUNNER_TEMP/frontend-env.js" > /dev/null || {
+                echo "::error::Frontend env.js does not contain the deployed API_BASE."
+                exit 1
+              }
+              echo "Runtime configuration check passed: $app /env.js"
+            fi
           }
 
-          # Image-only updates preserve each app's secrets, managed identity and settings.
+          # Preserve app secrets and identities; supply frontend browser routing.
           deploy_app "$BACKEND_APP" "$BACKEND_CONTAINER" "$BACKEND_IMAGE" backend "$BACKEND_URL"
           deploy_app "$FRONTEND_APP" "$FRONTEND_CONTAINER" "$FRONTEND_IMAGE" frontend "$FRONTEND_URL"
 

@@ -118,20 +118,24 @@ Optional repository/environment variables override these defaults:
 | `FRONTEND_CONTAINER_APP` | `myapp-prod-fe` |
 | `BACKEND_CONTAINER_NAME` | `backend` |
 | `FRONTEND_CONTAINER_NAME` | `frontend` |
+| `CONTAINER_APPS_API_BASE` | Backend app HTTPS origin; override for a browser-facing gateway/custom domain |
 
 Both apps must use Single revision mode, with HTTP ingress target ports `8000`
-for the API and `8080` for the frontend. The workflow only updates images;
-configure database/storage secrets, managed identities and runtime settings on
-the apps before deploying. Since this path does not deploy the Nginx proxy, set
-frontend `API_BASE` to the browser-reachable backend HTTPS origin (without `/api`),
-backend `CORS_ORIGINS` and `FRONTEND_BASE_URL` to the frontend origin, and
+for the API and `8080` for the frontend. The workflow updates images and sets the
+frontend `API_BASE` to the backend app's HTTPS origin, or `CONTAINER_APPS_API_BASE`
+when supplied. The origin is resolved even when private networking prevents
+public runner smoke tests. Since this path does not deploy the Nginx proxy,
+the direct backend origin does not include `/api`. Configure database/storage
+secrets, managed identities and other runtime settings on the apps before
+deploying. Set backend `CORS_ORIGINS` and `FRONTEND_BASE_URL` to the frontend origin, and
 `AZURE_BLOB_PROXY_URL` to the backend origin plus `/files/images` when using
 private Blob Storage.
 
 The backend is deployed and verified before the frontend. Verification checks
 the exact revision image, provisioning, health and the latest ready revision.
 For public ingress, smoke tests call backend `/health` and database `/ready`,
-then frontend `/` and `/env.js`. Private ingress skips public probes and relies
+then frontend `/` and `/env.js`, including the expected runtime `API_BASE` value.
+Private ingress skips public probes and relies
 on revision readiness; configure appropriate readiness probes on those apps.
 Failures report revision diagnostics without automatically rolling back.
 If the frontend fails after the backend succeeds, the backend remains updated;

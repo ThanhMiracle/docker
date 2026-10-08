@@ -86,6 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           npm install --no-audit --no-fund
+          npm test
           npm run build
 
       - name: Set up Python

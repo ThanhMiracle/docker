@@ -64,6 +64,10 @@ jobs:
         working-directory: frontend
         run: npm install --no-audit --no-fund
 
+      - name: Test frontend API configuration
+        working-directory: frontend
+        run: npm test
+
       - name: Build frontend
         working-directory: frontend
         run: npm run build
