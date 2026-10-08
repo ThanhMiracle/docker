@@ -94,6 +94,53 @@ digests và SBOM. Deployment ghi commit, Jira key và release run ID vào Pod
 annotations; GitHub Environment và Azure Activity Log giữ evidence approval và
 identity thực thi.
 
+## Azure Container Apps deployment
+
+`Deploy Container Apps` runs automatically after a successful `Build Release`
+push on `master`. It consumes that run's `release-evidence` artifact and deploys
+the API and frontend by digest. The existing AKS deploy/rollback workflows remain
+manual and operate independently.
+
+The Container Apps job uses the same `production` GitHub Environment and OIDC
+variables as the AKS deployment. Required reviewers configured on that environment
+also apply to this job. The deploy identity needs `Container Apps Contributor`
+on the existing apps (or their resource group); AKS roles alone are insufficient.
+The apps must already have working ACR pull credentials or a managed identity
+with registry pull access. The workflow checks the registry configuration;
+revision readiness verifies that the actual image pull succeeds.
+
+Optional repository/environment variables override these defaults:
+
+| Variable | Default |
+|---|---|
+| `CONTAINER_APPS_RESOURCE_GROUP` | `ThanhDT03-Lab` |
+| `BACKEND_CONTAINER_APP` | `myapp-prod-be` |
+| `FRONTEND_CONTAINER_APP` | `myapp-prod-fe` |
+| `BACKEND_CONTAINER_NAME` | `backend` |
+| `FRONTEND_CONTAINER_NAME` | `frontend` |
+
+Both apps must use Single revision mode, with HTTP ingress target ports `8000`
+for the API and `8080` for the frontend. The workflow only updates images;
+configure database/storage secrets, managed identities and runtime settings on
+the apps before deploying. Since this path does not deploy the Nginx proxy, set
+frontend `API_BASE` to the browser-reachable backend HTTPS origin (without `/api`),
+backend `CORS_ORIGINS` and `FRONTEND_BASE_URL` to the frontend origin, and
+`AZURE_BLOB_PROXY_URL` to the backend origin plus `/files/images` when using
+private Blob Storage.
+
+The backend is deployed and verified before the frontend. Verification checks
+the exact revision image, provisioning, health and the latest ready revision.
+For public ingress, smoke tests call backend `/health` and database `/ready`,
+then frontend `/` and `/env.js`. Private ingress skips public probes and relies
+on revision readiness; configure appropriate readiness probes on those apps.
+Failures report revision diagnostics without automatically rolling back.
+If the frontend fails after the backend succeeds, the backend remains updated;
+inspect the deployment summary before deciding how to recover. The AKS rollback
+workflow does not roll back Container Apps.
+
+See the [Azure CLI update reference](https://learn.microsoft.com/en-us/cli/azure/containerapp#az-containerapp-update)
+and [Container Apps revision behavior](https://learn.microsoft.com/en-us/azure/container-apps/revisions).
+
 ## 5. Failure và rollback
 
 Nếu verification thất bại, không chạy lại release và không build image mới.

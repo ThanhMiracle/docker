@@ -24,6 +24,12 @@ jobs:
       github.event.workflow_run.head_branch == 'master' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+
+    defaults:
+      run:
+        shell: bash
 
     permissions:
       contents: read
@@ -31,11 +37,11 @@ jobs:
       id-token: write
 
     env:
-      RESOURCE_GROUP: ThanhDT03-Lab
-      BACKEND_APP: myapp-prod-be
-      FRONTEND_APP: myapp-prod-fe
-      BACKEND_CONTAINER: backend
-      FRONTEND_CONTAINER: frontend
+      RESOURCE_GROUP: ${{ vars.CONTAINER_APPS_RESOURCE_GROUP || 'ThanhDT03-Lab' }}
+      BACKEND_APP: ${{ vars.BACKEND_CONTAINER_APP || 'myapp-prod-be' }}
+      FRONTEND_APP: ${{ vars.FRONTEND_CONTAINER_APP || 'myapp-prod-fe' }}
+      BACKEND_CONTAINER: ${{ vars.BACKEND_CONTAINER_NAME || 'backend' }}
+      FRONTEND_CONTAINER: ${{ vars.FRONTEND_CONTAINER_NAME || 'frontend' }}
       ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
       BUILD_COMMIT: ${{ github.event.workflow_run.head_sha }}
       BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -60,6 +66,9 @@ jobs:
           test -f release/release-manifest.json
           test -f release/checksums.txt
           (cd release && sha256sum --check checksums.txt)
+          # Explicitly check the manifest even if the checksum file omits it.
+          test "$(sha256sum release/release-manifest.json | cut -d ' ' -f 1)" = \
+            "$(awk '$2 == "release-manifest.json" { print $1 }' release/checksums.txt)"
 
           # Match the exact upstream build commit, run, attempt and expected ACR repos.
           jq -e \
@@ -93,4 +102,141 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Check existing Container Apps and ACR pull configuration
-        shell: bash
+        id: apps
+        run: |
+          set -euo pipefail
+
+          az extension add --name containerapp --upgrade --only-show-errors
+
+          check_app() {
+            local app="$1" container="$2" port="$3" output="$4"
+            local app_json
+            app_json="$(az containerapp show --name "$app" --resource-group "$RESOURCE_GROUP" --output json)"
+
+            # Single revision mode moves traffic only once the new revision is ready.
+            # Do not change existing traffic policies implicitly during a release.
+            jq -e --arg container "$container" --arg registry "$ACR_LOGIN_SERVER" --argjson port "$port" '
+              .properties.configuration.activeRevisionsMode == "Single" and
+              .properties.configuration.ingress.targetPort == $port and
+              ([.properties.template.containers[] | select(.name == $container)] | length == 1) and
+              any(.properties.configuration.registries[]?;
+                .server == $registry and
+                ((.identity // "") != "" or
+                 ((.username // "") != "" and (.passwordSecretRef // "") != "")))
+            ' <<< "$app_json" > /dev/null || {
+              echo "::error::$app requires container $container, ingress port $port, Single revision mode, and credentials or a pull identity for $ACR_LOGIN_SERVER."
+              exit 1
+            }
+
+            # Keep private ingress usable; public probes run only for external ingress.
+            if [[ "$(jq -r '.properties.configuration.ingress.external' <<< "$app_json")" == "true" ]]; then
+              fqdn="$(jq -er '.properties.configuration.ingress.fqdn | select(type == "string" and length > 0)' <<< "$app_json")"
+              printf '%s_url=https://%s\n' "$output" "$fqdn" >> "$GITHUB_OUTPUT"
+            fi
+          }
+
+          check_app "$BACKEND_APP" "$BACKEND_CONTAINER" 8000 backend
+          check_app "$FRONTEND_APP" "$FRONTEND_CONTAINER" 8080 frontend
+
+      - name: Deploy and verify backend, then frontend
+        id: deploy
+        env:
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
+          BACKEND_URL: ${{ steps.apps.outputs.backend_url }}
+          FRONTEND_URL: ${{ steps.apps.outputs.frontend_url }}
+        run: |
+          set -euo pipefail
+
+          deploy_app() {
+            local app="$1" container="$2" image="$3" output="$4" url="$5"
+            local suffix="gh${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            local revision revision_json app_json
+
+            revision="$(az containerapp update \
+              --name "$app" --resource-group "$RESOURCE_GROUP" \
+              --container-name "$container" --image "$image" \
+              --revision-suffix "$suffix" \
+              --query properties.latestRevisionName --output tsv --only-show-errors)"
+            test "$revision" = "$app--$suffix"
+            printf '%s_revision=%s\n' "$output" "$revision" >> "$GITHUB_OUTPUT"
+
+            for attempt in {1..60}; do
+              revision_json="$(az containerapp revision show \
+                --name "$app" --resource-group "$RESOURCE_GROUP" \
+                --revision "$revision" --output json)"
+              app_json="$(az containerapp show \
+                --name "$app" --resource-group "$RESOURCE_GROUP" --output json)"
+
+              if jq -e --arg container "$container" --arg image "$image" '
+                .properties.active == true and
+                .properties.provisioningState == "Provisioned" and
+                .properties.healthState == "Healthy" and
+                any(.properties.template.containers[]; .name == $container and .image == $image)
+              ' <<< "$revision_json" > /dev/null &&
+                [[ "$(jq -r '.properties.latestReadyRevisionName' <<< "$app_json")" == "$revision" ]]; then
+                echo "$app is serving verified revision $revision."
+                break
+              fi
+
+              state="$(jq -r '.properties.provisioningState' <<< "$revision_json")"
+              if [[ "$state" == "Failed" || "$state" == "ProvisioningFailed" || "$attempt" == 60 ]]; then
+                echo "::error::$app revision $revision failed to become healthy and ready."
+                exit 1
+              fi
+              echo "Waiting for $app revision $revision ($attempt/60)..."
+              sleep 10
+            done
+
+            if [[ -z "$url" ]]; then
+              echo "::notice::$app has private ingress; public smoke tests are skipped."
+              return
+            fi
+
+            # The API image exposes /health and /ready directly, without /api.
+            if [[ "$output" == "backend" ]]; then
+              paths=(/health /ready)
+            else
+              paths=(/ /env.js)
+            fi
+            for path in "${paths[@]}"; do
+              curl --fail --silent --show-error --location \
+                --connect-timeout 10 --max-time 30 \
+                --retry 5 --retry-delay 10 --retry-all-errors \
+                --output /dev/null "$url$path"
+            done
+          }
+
+          # Image-only updates preserve app secrets, identities and runtime settings.
+          deploy_app "$BACKEND_APP" "$BACKEND_CONTAINER" "$BACKEND_IMAGE" backend "$BACKEND_URL"
+          deploy_app "$FRONTEND_APP" "$FRONTEND_CONTAINER" "$FRONTEND_IMAGE" frontend "$FRONTEND_URL"
+
+      - name: Collect revision diagnostics on failure
+        if: failure()
+        run: |
+          for app in "$BACKEND_APP" "$FRONTEND_APP"; do
+            az containerapp revision list \
+              --name "$app" --resource-group "$RESOURCE_GROUP" \
+              --query '[].{revision:name,active:properties.active,provisioning:properties.provisioningState,health:properties.healthState,running:properties.runningState}' \
+              --output table || true
+          done
+
+      - name: Publish deployment summary
+        if: always()
+        env:
+          DEPLOY_STATUS: ${{ job.status }}
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
+          BACKEND_REVISION: ${{ steps.deploy.outputs.backend_revision }}
+          FRONTEND_REVISION: ${{ steps.deploy.outputs.frontend_revision }}
+        run: |
+          {
+            echo "## Container Apps deployment: $DEPLOY_STATUS"
+            echo
+            echo "- Build Release: $BUILD_RUN_ID (attempt $BUILD_RUN_ATTEMPT)"
+            echo "- Commit: $BUILD_COMMIT"
+            echo "- Backend: $BACKEND_APP / $BACKEND_REVISION"
+            echo "- Backend image: $BACKEND_IMAGE"
+            echo "- Frontend: $FRONTEND_APP / $FRONTEND_REVISION"
+            echo "- Frontend image: $FRONTEND_IMAGE"
+          } >> "$GITHUB_STEP_SUMMARY"
