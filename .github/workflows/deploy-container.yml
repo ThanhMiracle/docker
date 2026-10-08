@@ -1,0 +1,96 @@
+name: Deploy Container Apps
+
+# Runs only after the Build Release workflow completes on master.
+on:
+  workflow_run:
+    workflows: ["Build Release"]
+    types: [completed]
+    branches: [master]
+
+permissions:
+  contents: read
+
+# Do not run two production updates at the same time.
+concurrency:
+  group: deploy-container-apps-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy backend and frontend
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+
+    env:
+      RESOURCE_GROUP: ThanhDT03-Lab
+      BACKEND_APP: myapp-prod-be
+      FRONTEND_APP: myapp-prod-fe
+      BACKEND_CONTAINER: backend
+      FRONTEND_CONTAINER: frontend
+      ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+      BUILD_COMMIT: ${{ github.event.workflow_run.head_sha }}
+      BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+      BUILD_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+
+    steps:
+      - name: Download release evidence from successful build
+        uses: actions/download-artifact@v4
+        with:
+          name: release-evidence
+          path: release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate manifest and extract immutable image references
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$ACR_LOGIN_SERVER"
+          test -f release/release-manifest.json
+          test -f release/checksums.txt
+          (cd release && sha256sum --check checksums.txt)
+
+          # Match the exact upstream build commit, run, attempt and expected ACR repos.
+          jq -e \
+            --arg sha "$BUILD_COMMIT" \
+            --argjson run_id "$BUILD_RUN_ID" \
+            --argjson attempt "$BUILD_RUN_ATTEMPT" \
+            --arg backend_repo "$ACR_LOGIN_SERVER/my-api" \
+            --arg frontend_repo "$ACR_LOGIN_SERVER/my-fe" \
+            '
+              .schema_version == 1 and
+              .commit == $sha and
+              .workflow_run_id == $run_id and
+              .workflow_run_attempt == $attempt and
+              .images.api.repository == $backend_repo and
+              .images.frontend.repository == $frontend_repo and
+              (.images.api.digest | test("^sha256:[a-f0-9]{64}$")) and
+              (.images.frontend.digest | test("^sha256:[a-f0-9]{64}$"))
+            ' release/release-manifest.json > /dev/null
+
+          backend_digest="$(jq -r '.images.api.digest' release/release-manifest.json)"
+          frontend_digest="$(jq -r '.images.frontend.digest' release/release-manifest.json)"
+
+          printf 'backend_image=%s/my-api@%s\n' "$ACR_LOGIN_SERVER" "$backend_digest" >> "$GITHUB_OUTPUT"
+          printf 'frontend_image=%s/my-fe@%s\n' "$ACR_LOGIN_SERVER" "$frontend_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Azure with deployment OIDC identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check existing Container Apps and ACR pull configuration
+        shell: bash
