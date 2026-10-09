@@ -149,7 +149,7 @@ jobs:
               .properties.configuration.ingress.fqdn
               | select(type == "string" and length > 0)
             ' <<< "$app_json")"
-            # Browser routing still needs an origin for private environments.
+            # App origins can be private; browser traffic uses the public gateway.
             printf '%s_origin=https://%s\n' "$output" "$fqdn" >> "$GITHUB_OUTPUT"
 
             if [[ "$environment_internal" == "true" ]]; then
@@ -177,7 +177,7 @@ jobs:
           FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
           BACKEND_URL: ${{ steps.apps.outputs.backend_url }}
           FRONTEND_URL: ${{ steps.apps.outputs.frontend_url }}
-          FRONTEND_API_BASE: ${{ vars.CONTAINER_APPS_API_BASE || steps.apps.outputs.backend_origin }}
+          FRONTEND_API_BASE: ${{ vars.CONTAINER_APPS_API_BASE || '/api' }}
         run: |
           set -euo pipefail
           test -n "$FRONTEND_API_BASE"
@@ -190,7 +190,7 @@ jobs:
             local -a runtime_args=()
 
             if [[ "$output" == "frontend" ]]; then
-              # Separate Container Apps do not have the Compose /api reverse proxy.
+              # Front Door and Application Gateway route /api to the private backend.
               runtime_args=(--set-env-vars "API_BASE=$FRONTEND_API_BASE")
             fi
 
