@@ -98,7 +98,7 @@ def update_profile(
 # AUTH
 # =========================
 
-@app.post("/auth/register", response_model=schemas.UserOut)
+@app.post("/auth/register", response_model=schemas.RegistrationOut)
 def register(
     user: schemas.UserCreate,
     db: Session = Depends(database.get_db),
@@ -113,51 +113,24 @@ def register(
             detail="Email already registered",
         )
 
-    admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
-
-    is_admin = bool(admin_email) and email == admin_email
-
-    # Ensure only one admin exists
-    if is_admin:
-        db.query(models.User).filter(
-            models.User.is_admin.is_(True)
-        ).update(
-            {"is_admin": False},
-            synchronize_session=False,
+    # Pending details live only in the encrypted email link. No database writes
+    # occur until the recipient confirms, including for new administrators.
+    token = security.create_registration_token(user.name, email, user.password)
+    try:
+        email_service.send_account_verification(email, token)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error))
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not send verification email. Please try again later.",
         )
 
-        db.commit()
-
-    created_user = crud.create_user(
-        db=db,
-        name=user.name,
-        email=email,
-        password=user.password,
-        is_admin=is_admin,
-    )
-
-    # Normal users need email verification.
-    # Admin is automatically verified.
-    if not is_admin:
-        try:
-            email_service.send_account_verification(
-                created_user.email,
-                created_user.email_verification_token,
-            )
-
-        except RuntimeError as error:
-            raise HTTPException(
-                status_code=503,
-                detail=str(error),
-            )
-
-        except Exception:
-            raise HTTPException(
-                status_code=503,
-                detail="Could not send verification email. Please try again later.",
-            )
-
-    return created_user
+    return {
+        "email": email,
+        "email_verified": False,
+        "message": "Check your email to confirm registration. Your account will be created only after confirmation.",
+    }
 
 
 @app.post("/auth/login", response_model=schemas.Token)

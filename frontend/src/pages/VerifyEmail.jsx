@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { apiUrl } from '../api'
 
@@ -32,9 +32,13 @@ export default function VerifyEmail() {
   const [searchParams] = useSearchParams()
   const [message, setMessage] = useState('Verifying your email...')
   const [success, setSuccess] = useState(false)
+  const verificationRequest = useRef(null)
 
   useEffect(() => {
     const token = searchParams.get('token')
+    let active = true
+    setSuccess(false)
+    setMessage('Verifying your email...')
 
     if (!token) {
       setMessage('Verification token is missing.')
@@ -42,33 +46,34 @@ export default function VerifyEmail() {
     }
 
     const verifyEmail = async () => {
-      try {
-        const response = await fetch(`${API}/auth/verify-email`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            token: token
-          })
-        })
-
-        const data = await response.json().catch(() => ({
-          detail: 'Could not reach the verification service. Open the app through the Nginx address.'
-        }))
-
-        if (!response.ok) {
-          throw new Error(data.detail || 'Email verification failed')
-        }
-
-        setSuccess(true)
-        setMessage('Your email has been verified successfully.')
-      } catch (error) {
-        setMessage(error.message)
+      const response = await fetch(`${API}/auth/verify-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      })
+      const data = await response.json().catch(() => ({
+        detail: 'Could not reach the verification service. Open the app through the Nginx address.'
+      }))
+      if (!response.ok) {
+        throw new Error(data.detail || 'Email verification failed')
       }
+      return data
     }
 
-    verifyEmail()
+    // Reuse the request when StrictMode runs the effect twice. Confirmation
+    // creates an account and consumes the link, so it must be sent only once.
+    if (verificationRequest.current?.token !== token) {
+      verificationRequest.current = { token, promise: verifyEmail() }
+    }
+    verificationRequest.current.promise.then(() => {
+      if (active) {
+        setSuccess(true)
+        setMessage('Your email has been verified and your account is ready. You can now log in.')
+      }
+    }).catch(error => {
+      if (active) setMessage(error.message)
+    })
+    return () => { active = false }
   }, [searchParams])
 
   return (

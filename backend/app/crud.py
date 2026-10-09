@@ -1,40 +1,39 @@
 from typing import Optional
 import json
+import os
 from datetime import datetime, timedelta, timezone
 import secrets
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
+from sqlalchemy.exc import IntegrityError
 from . import models, security
-def create_user(
+def create_verified_user(
     db: Session,
     name: str,
     email: str,
-    password: str,
+    hashed_password: str,
     is_admin: bool = False
 ):
     email = email.strip().lower()
 
-    if is_admin:
-        verification_token = None
-        verification_expires_at = None
-    else:
-        verification_token = secrets.token_urlsafe(32)
-        verification_expires_at = (
-            datetime.now(timezone.utc) + timedelta(minutes=30)
-        )
-
     user = models.User(
         name=name.strip(),
         email=email,
-        hashed_password=security.get_password_hash(password),
+        hashed_password=hashed_password,
         is_admin=is_admin,
-        email_verified=is_admin,
-        email_verification_token=verification_token,
-        email_verification_expires_at=verification_expires_at
+        email_verified=True,
     )
 
-    db.add(user)
-    db.commit()
+    try:
+        if is_admin:
+            db.query(models.User).filter(models.User.is_admin.is_(True)).update(
+                {"is_admin": False}, synchronize_session=False
+            )
+        db.add(user)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(user)
 
     return user
@@ -57,6 +56,27 @@ def update_user_profile(db: Session, user, data: dict):
     return user
 
 def verify_user_email(db: Session, token: str):
+    if token.startswith(security.REGISTRATION_TOKEN_PREFIX):
+        payload, error = security.decode_registration_token(token)
+        if error:
+            return None, error
+        # Email uniqueness consumes the link and prevents later links from
+        # overwriting the password or profile of an already-confirmed account.
+        if get_user_by_email(db, payload["email"]):
+            return None, "invalid"
+        admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
+        try:
+            user = create_verified_user(
+                db, **payload,
+                is_admin=bool(admin_email) and payload["email"] == admin_email,
+            )
+        except IntegrityError:
+            # Two confirmations may race; the database unique constraint
+            # chooses one and the failed transaction is rolled back.
+            return None, "invalid"
+        return user, None
+
+    # Continue accepting links sent by the previous registration flow.
     user = (
         db.query(models.User)
         .filter(

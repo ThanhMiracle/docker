@@ -9,7 +9,7 @@ def test_create_product_requires_auth(client):
     )
     assert r.status_code == 401
 
-def test_create_edit_delete_product_simple(client, user_data):
+def test_create_edit_delete_product_simple(client, user_data, verification_emails):
     """Tạo, sửa, xóa sản phẩm với chính user đó (không test ownership phức tạp)"""
 
     # Đăng nhập hoặc đăng ký nếu chưa có
@@ -20,6 +20,8 @@ def test_create_edit_delete_product_simple(client, user_data):
     )
     if r.status_code != 200:
         client.post("/auth/register", json=user_data)
+        confirmation = client.post("/auth/verify-email", json={"token": verification_emails[-1][1]})
+        assert confirmation.status_code == 200, confirmation.text
         r = client.post(
             "/auth/login",
             data={"username": user_data["email"], "password": user_data["password"]},

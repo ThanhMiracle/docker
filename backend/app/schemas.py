@@ -1,11 +1,27 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Literal, Optional, List
 from datetime import datetime
 from pydantic import ConfigDict
 class UserCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Name must not be blank")
+        return value
+
+
+class RegistrationOut(BaseModel):
+    email: EmailStr
+    email_verified: bool = False
+    message: str
+
+
 class UserOut(BaseModel):
     id: int
     name: str

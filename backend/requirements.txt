@@ -5,6 +5,7 @@ psycopg[binary]
 python-multipart
 passlib[argon2]
 python-jose[cryptography]
+cryptography
 pydantic
 email-validator
 azure-storage-blob

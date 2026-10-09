@@ -13,6 +13,13 @@ The first build downloads Go dependencies and can take several minutes.
 The development Compose file uses this build; local MinIO data stays in
 `minio_data`. Production uses Azure Blob Storage.
 
+The `minio-permissions` startup service sets ownership and owner read/write
+permissions on the MinIO volume before MinIO starts as UID/GID `10001:10001`.
+This supports reused volumes containing files previously written as root. If
+MinIO reports `file access denied` or `Unable to write to the backend`, run
+`docker compose up -d --build minio` to apply the repair and restart it with the
+existing data.
+
 Open:
 - Frontend: http://localhost:3000
 - Backend docs: http://localhost:8000/docs
@@ -58,6 +65,27 @@ This project is a simple fullstack web application demonstrating modern developm
 - **DevOps:** Docker, Docker Compose
 - **Testing:** pytest
 - **Infrastructure:** Terraform
+
+### Account registration and email confirmation
+
+`POST /auth/register` validates the details and sends a confirmation email. It
+returns an email address, `email_verified: false`, and a message; it does not
+return a user ID or create a database account. Pending name, email, and password
+hash are carried in an authenticated encrypted link that expires in 30 minutes.
+No pending registration data is stored in the database, and the plaintext
+password is never included in the link.
+
+`POST /auth/verify-email` creates the verified account only after validating the
+link. This also applies to new accounts matching `ADMIN_EMAIL`. Failed email
+delivery, abandoned registrations, and invalid or expired links create no
+account. Users can register again if they have not confirmed; once an account
+exists, further registration or confirmation cannot overwrite it.
+
+Configure `SMTP_HOST`, `SMTP_FROM`, and the other SMTP settings to deliver email.
+All API instances must use the same strong `JWT_SECRET`, which also derives the
+registration encryption key. Changing that secret invalidates pending links.
+Previously saved accounts and their older confirmation links remain supported;
+this change does not delete existing unverified accounts.
 
 ### Folder Structure
 
