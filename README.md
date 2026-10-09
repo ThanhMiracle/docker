@@ -68,7 +68,7 @@ This project is a simple fullstack web application demonstrating modern developm
 
 ### Account registration and email confirmation
 
-`POST /auth/register` validates the details and sends a confirmation email. It
+For regular users, `POST /auth/register` validates the details and sends a confirmation email. It
 returns an email address, `email_verified: false`, and a message; it does not
 return a user ID or create a database account. Pending name, email, and password
 hash are carried in an authenticated encrypted link that expires in 30 minutes.
@@ -76,10 +76,15 @@ No pending registration data is stored in the database, and the plaintext
 password is never included in the link.
 
 `POST /auth/verify-email` creates the verified account only after validating the
-link. This also applies to new accounts matching `ADMIN_EMAIL`. Failed email
+link. Failed email
 delivery, abandoned registrations, and invalid or expired links create no
 account. Users can register again if they have not confirmed; once an account
 exists, further registration or confirmation cannot overwrite it.
+
+Accounts matching the configured `ADMIN_EMAIL` (ignoring case and surrounding
+whitespace) are created immediately as verified administrators without sending
+an email. Registration returns `email_verified: true` and a message that the
+admin can log in now. Admin registration works even when SMTP is unavailable.
 
 Configure `SMTP_HOST`, `SMTP_FROM`, and the other SMTP settings to deliver email.
 All API instances must use the same strong `JWT_SECRET`, which also derives the

@@ -8,8 +8,8 @@ def test_register_login_and_create_product(client, verification_emails):
     user = {"name": "Alice", "email": "alice@example.com", "password": "secret123"}
     r = client.post(API_REGISTER, json=user)
     assert r.status_code == 200, r.text
-    r = client.post("/auth/verify-email", json={"token": verification_emails[-1][1]})
-    assert r.status_code == 200, r.text
+    assert r.json()["email_verified"] is True
+    assert verification_emails == []
 
     # 2) Đăng nhập
     form = {"username": user["email"], "password": user["password"]}

@@ -19,9 +19,11 @@ def test_create_edit_delete_product_simple(client, user_data, verification_email
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     if r.status_code != 200:
-        client.post("/auth/register", json=user_data)
-        confirmation = client.post("/auth/verify-email", json={"token": verification_emails[-1][1]})
-        assert confirmation.status_code == 200, confirmation.text
+        registration = client.post("/auth/register", json=user_data)
+        assert registration.status_code == 200, registration.text
+        if not registration.json()["email_verified"]:
+            confirmation = client.post("/auth/verify-email", json={"token": verification_emails[-1][1]})
+            assert confirmation.status_code == 200, confirmation.text
         r = client.post(
             "/auth/login",
             data={"username": user_data["email"], "password": user_data["password"]},

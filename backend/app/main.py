@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import os
 import json
@@ -113,8 +114,23 @@ def register(
             detail="Email already registered",
         )
 
-    # Pending details live only in the encrypted email link. No database writes
-    # occur until the recipient confirms, including for new administrators.
+    admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
+    if admin_email and email == admin_email:
+        try:
+            crud.create_verified_user(
+                db, user.name, email, security.get_password_hash(user.password),
+                is_admin=True,
+            )
+        except IntegrityError:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        return {
+            "email": email,
+            "email_verified": True,
+            "message": "Admin account created. You can log in now.",
+        }
+
+    # Regular users' pending details live only in the encrypted email link.
+    # No database writes occur until the recipient confirms.
     token = security.create_registration_token(user.name, email, user.password)
     try:
         email_service.send_account_verification(email, token)

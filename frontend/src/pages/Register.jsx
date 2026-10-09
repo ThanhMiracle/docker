@@ -59,7 +59,9 @@ export default function Register() {
           : 'Please check your registration details and try again.'
         throw new Error(detail)
       }
-      setMessage(data.message || 'Check your email to confirm registration. Your account will be created after confirmation.')
+      setMessage(data.message || (data.email_verified
+        ? 'Account created. You can log in now.'
+        : 'Check your email to confirm registration. Your account will be created after confirmation.'))
       setPassword('')
     } catch (error) {
       setError(error.message || 'Could not complete registration. Please try again.')
@@ -96,7 +98,7 @@ export default function Register() {
           value={password}
           onChange={e => setPassword(e.target.value)}
         />
-        <button type="submit" disabled={submitting}>{submitting ? 'Sending confirmation...' : 'Create account'}</button>
+        <button type="submit" disabled={submitting}>{submitting ? 'Creating account...' : 'Create account'}</button>
       </form>
       {message && <p role="status">{message}</p>}
       {error && <p role="alert">{error}</p>}

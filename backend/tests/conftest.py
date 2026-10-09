@@ -60,10 +60,11 @@ def login_user(client, verification_emails):
             "name": name, "email": email, "password": password,
         })
         assert response.status_code == 200, response.text
-        response = client.post("/auth/verify-email", json={
-            "token": verification_emails[-1][1],
-        })
-        assert response.status_code == 200, response.text
+        if not response.json()["email_verified"]:
+            response = client.post("/auth/verify-email", json={
+                "token": verification_emails[-1][1],
+            })
+            assert response.status_code == 200, response.text
         response = client.post(
             "/auth/login", data={"username": email, "password": password},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
