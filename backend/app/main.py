@@ -135,8 +135,10 @@ def register(
     try:
         email_service.send_account_verification(email, token)
     except RuntimeError as error:
+        logger.exception("Account verification email delivery failed")
         raise HTTPException(status_code=503, detail=str(error))
     except Exception:
+        logger.exception("Account verification email delivery failed")
         raise HTTPException(
             status_code=503,
             detail="Could not send verification email. Please try again later.",

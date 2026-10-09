@@ -1,4 +1,5 @@
 import time
+import smtplib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -47,8 +48,12 @@ def test_registration_saves_nothing_until_confirmation(client, verification_emai
     assert len(users()) == 1
 
 
-@pytest.mark.parametrize("error", [RuntimeError("Email is not configured"), OSError("SMTP unavailable")])
-def test_email_failure_creates_no_account_and_allows_retry(client, monkeypatch, verification_emails, error):
+@pytest.mark.parametrize("error", [
+    RuntimeError("Email is not configured"),
+    OSError("SMTP unavailable"),
+    smtplib.SMTPAuthenticationError(535, b"Username and password not accepted"),
+])
+def test_email_failure_creates_no_account_and_allows_retry(client, monkeypatch, verification_emails, error, caplog):
     email = "new@example.com"
     def fail(*_args):
         raise error
@@ -57,6 +62,11 @@ def test_email_failure_creates_no_account_and_allows_retry(client, monkeypatch, 
         patch.setattr("app.email_service.send_account_verification", fail)
         response = client.post("/auth/register", json=registration(email))
     assert response.status_code == 503
+    failures = [record for record in caplog.records if record.getMessage() == "Account verification email delivery failed"]
+    assert len(failures) == 1
+    assert failures[0].exc_info[1] is error
+    if not isinstance(error, RuntimeError):
+        assert response.json()["detail"] == "Could not send verification email. Please try again later."
     assert users() == []
     assert verification_emails == []
     assert client.post("/auth/register", json=registration(email)).status_code == 200
