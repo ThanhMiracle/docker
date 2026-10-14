@@ -1,0 +1,181 @@
+name: Rollback Container Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Build Release run ID of the known-good release to restore
+        required: true
+        type: string
+      reason:
+        description: Reason for rollback (include the incident or change ticket if applicable)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Use the same lock as Deploy Container Apps.
+concurrency:
+  group: deploy-container-apps-production
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Restore backend and frontend images
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      RESOURCE_GROUP: ${{ vars.CONTAINER_APPS_RESOURCE_GROUP || 'ThanhDT03-Lab' }}
+      BACKEND_APP: ${{ vars.BACKEND_CONTAINER_APP || 'myapp-prod-be' }}
+      FRONTEND_APP: ${{ vars.FRONTEND_CONTAINER_APP || 'myapp-prod-fe' }}
+      BACKEND_CONTAINER: ${{ vars.BACKEND_CONTAINER_NAME || 'backend' }}
+      FRONTEND_CONTAINER: ${{ vars.FRONTEND_CONTAINER_NAME || 'frontend' }}
+      ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+      ROLLBACK_REASON: ${{ inputs.reason }}
+      DEPLOY_OPERATION: rollback
+      REVISION_PREFIX: rb
+    steps:
+      - name: Checkout pipeline scripts
+        uses: actions/checkout@v6
+
+      - name: Validate selected Build Release run
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::release_run_id must be a positive GitHub Actions run ID."
+            exit 1
+          }
+          [[ "$ROLLBACK_REASON" =~ [^[:space:]] ]] || {
+            echo "::error::A rollback reason is required."
+            exit 1
+          }
+          test -n "$ACR_LOGIN_SERVER"
+          run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID")"
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .path == ".github/workflows/release.yml" and
+            .status == "completed" and .conclusion == "success" and
+            .event == "push" and .head_branch == "master" and
+            .head_repository.full_name == $repo and
+            (.head_sha | test("^[a-f0-9]{40}$")) and
+            (.run_attempt | type == "number" and . > 0)
+          ' <<< "$run_json" > /dev/null || {
+            echo "::error::Select a successful Build Release push on master from this repository."
+            exit 1
+          }
+          printf 'commit=%s\n' "$(jq -r '.head_sha' <<< "$run_json")" >> "$GITHUB_OUTPUT"
+          printf 'attempt=%s\n' "$(jq -r '.run_attempt' <<< "$run_json")" >> "$GITHUB_OUTPUT"
+
+      - name: Download selected release evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: release-evidence
+          path: release
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate evidence and resolve immutable images
+        id: images
+        env:
+          BUILD_COMMIT: ${{ steps.release.outputs.commit }}
+          BUILD_RUN_ID: ${{ inputs.release_run_id }}
+          BUILD_RUN_ATTEMPT: ${{ steps.release.outputs.attempt }}
+        run: |
+          set -euo pipefail
+          test -f release/release-manifest.json
+          test -f release/checksums.txt
+          (cd release && sha256sum --check checksums.txt)
+          manifest_checksum="$(awk '$2 == "release-manifest.json" { print $1 }' release/checksums.txt)"
+          test -n "$manifest_checksum"
+          test "$(sha256sum release/release-manifest.json | cut -d ' ' -f 1)" = "$manifest_checksum"
+          jq -e \
+            --arg sha "$BUILD_COMMIT" \
+            --argjson run_id "$BUILD_RUN_ID" \
+            --argjson attempt "$BUILD_RUN_ATTEMPT" \
+            --arg backend_repo "$ACR_LOGIN_SERVER/my-api" \
+            --arg frontend_repo "$ACR_LOGIN_SERVER/my-fe" '
+              .schema_version == 1 and .commit == $sha and
+              .workflow_run_id == $run_id and .workflow_run_attempt == $attempt and
+              .images.api.repository == $backend_repo and
+              .images.frontend.repository == $frontend_repo and
+              (.images.api.digest | test("^sha256:[a-f0-9]{64}$")) and
+              (.images.frontend.digest | test("^sha256:[a-f0-9]{64}$"))
+            ' release/release-manifest.json > /dev/null
+          printf 'backend_image=%s/my-api@%s\n' "$ACR_LOGIN_SERVER" \
+            "$(jq -r '.images.api.digest' release/release-manifest.json)" >> "$GITHUB_OUTPUT"
+          printf 'frontend_image=%s/my-fe@%s\n' "$ACR_LOGIN_SERVER" \
+            "$(jq -r '.images.frontend.digest' release/release-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Azure with deployment OIDC identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check both apps before making changes
+        id: apps
+        run: bash scripts/check-container-apps.sh
+
+      - name: Record revisions before rollback
+        run: |
+          for app in "$BACKEND_APP" "$FRONTEND_APP"; do
+            revision="$(az containerapp show --name "$app" --resource-group "$RESOURCE_GROUP" \
+              --query properties.latestReadyRevisionName --output tsv --only-show-errors)"
+            printf -- '- Before rollback: %s / %s\n' "$app" "$revision" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Restore and verify backend, then frontend
+        id: restore
+        env:
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
+          BACKEND_URL: ${{ steps.apps.outputs.backend_url }}
+          FRONTEND_URL: ${{ steps.apps.outputs.frontend_url }}
+          FRONTEND_API_BASE: ${{ steps.apps.outputs.frontend_api_base }}
+        run: bash scripts/deploy-container-apps.sh
+
+      - name: Collect revision diagnostics on failure
+        if: failure()
+        run: |
+          for app in "$BACKEND_APP" "$FRONTEND_APP"; do
+            az containerapp revision list --name "$app" --resource-group "$RESOURCE_GROUP" \
+              --query '[].{revision:name,active:properties.active,provisioning:properties.provisioningState,health:properties.healthState,running:properties.runningState}' \
+              --output table --only-show-errors || true
+          done
+
+      - name: Publish rollback summary
+        if: always()
+        env:
+          ROLLBACK_STATUS: ${{ job.status }}
+          BUILD_COMMIT: ${{ steps.release.outputs.commit }}
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
+          BACKEND_REVISION: ${{ steps.restore.outputs.backend_revision }}
+          FRONTEND_REVISION: ${{ steps.restore.outputs.frontend_revision }}
+        run: |
+          {
+            echo "## Container Apps rollback: $ROLLBACK_STATUS"
+            echo
+            printf -- '- Requested by: %s\n' "$GITHUB_ACTOR"
+            printf -- '- Reason: %s\n' "$ROLLBACK_REASON"
+            echo "- Build Release: $RELEASE_RUN_ID"
+            echo "- Commit: $BUILD_COMMIT"
+            echo "- Backend: $BACKEND_APP / $BACKEND_REVISION"
+            echo "- Backend image: $BACKEND_IMAGE"
+            echo "- Frontend: $FRONTEND_APP / $FRONTEND_REVISION"
+            echo "- Frontend image: $FRONTEND_IMAGE"
+            echo "- Image rollback preserves current app configuration and secrets; database changes are not reversed."
+          } >> "$GITHUB_STEP_SUMMARY"

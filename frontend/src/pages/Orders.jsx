@@ -123,6 +123,11 @@ export default function Orders() {
                 <div className="order-actions"><button className="text-button" onClick={() => startEditingDelivery(order)}>Edit delivery</button><button className="cancel-order" onClick={() => cancelOrder(order.id)}>Cancel order</button></div>
               )}
               {isAdmin && nextOrderStatus[order.status] && <div className="order-actions"><button onClick={() => advanceOrderStatus(order.id, nextOrderStatus[order.status])}>{nextOrderStatus[order.status].label}</button></div>}
+              {!isAdmin && order.status === 'delivered' && <div className="order-review-links">
+                {[...new Map(order.items.map(item => [item.product_id, item])).values()].map(item =>
+                  <Link key={item.product_id} to={`/products/${item.product_id}#reviews`}>{item.reviewed ? 'View review' : 'Review product'}: {item.product_name}</Link>
+                )}
+              </div>}
             </article>
           ))}
         </div>

@@ -94,6 +94,7 @@ class OrderItemOut(BaseModel):
     unit_price: float
     quantity: int
     selected_color: Optional[str] = None
+    reviewed: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 class CheckoutCreate(BaseModel):
@@ -146,3 +147,39 @@ class ChatConversationOut(BaseModel):
 
 class ChatUnreadOut(BaseModel):
     unread_count: int
+
+
+class ReviewMediaOut(BaseModel):
+    url: str
+    kind: Literal["image", "video"]
+    content_type: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReviewOut(BaseModel):
+    id: int
+    product_id: int
+    author_name: str
+    rating: int
+    comment: str
+    created_at: datetime
+    verified_purchase: bool = True
+    media: List[ReviewMediaOut] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReviewsPage(BaseModel):
+    items: List[ReviewOut]
+    total: int
+    average_rating: Optional[float] = None
+    skip: int
+    limit: int
+
+
+class ReviewEligibleOrder(BaseModel):
+    order_id: int
+    created_at: datetime
+
+
+class ReviewEligibility(BaseModel):
+    eligible_orders: List[ReviewEligibleOrder]

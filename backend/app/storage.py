@@ -3,6 +3,7 @@
 import os
 import uuid
 import json
+import re
 from functools import lru_cache
 from urllib.parse import quote
 
@@ -36,6 +37,10 @@ AZURE_BLOB_PUBLIC_URL = os.getenv("AZURE_BLOB_PUBLIC_URL", "")
 AZURE_BLOB_PROXY_URL = os.getenv("AZURE_BLOB_PROXY_URL", "/api/files/images")
 
 
+class StorageConfigurationError(RuntimeError):
+    """Storage settings are missing; retrying the upload cannot resolve this."""
+
+
 @lru_cache(maxsize=1)
 def _azure_service_client():
     if AZURE_STORAGE_ACCOUNT_URL:
@@ -50,7 +55,7 @@ def _azure_service_client():
         return BlobServiceClient.from_connection_string(
             AZURE_STORAGE_CONNECTION_STRING,
         )
-    raise RuntimeError(
+    raise StorageConfigurationError(
         "AZURE_STORAGE_ACCOUNT_URL is required for managed identity "
         "(or set AZURE_STORAGE_CONNECTION_STRING for connection-string authentication)"
     )
@@ -58,12 +63,12 @@ def _azure_service_client():
 
 def _azure_container_client():
     if not AZURE_STORAGE_CONTAINER:
-        raise RuntimeError("AZURE_STORAGE_CONTAINER is required")
+        raise StorageConfigurationError("AZURE_STORAGE_CONTAINER is required")
     return _azure_service_client().get_container_client(AZURE_STORAGE_CONTAINER)
 
 
-def _put_azure_blob(file_bytes: bytes, content_type: str, ext: str) -> str:
-    key = f"products/{uuid.uuid4().hex}{ext}"
+def _put_azure_blob(file_bytes: bytes, content_type: str, ext: str, key=None) -> str:
+    key = key or f"products/{uuid.uuid4().hex}{ext}"
     container = _azure_container_client()
     if AZURE_STORAGE_AUTO_CREATE_CONTAINER:
         try:
@@ -124,15 +129,15 @@ def _ensure_local_bucket(client):
     }))
 
 
-def _put_minio_object(file_bytes: bytes, content_type: str, ext: str) -> str:
+def _put_minio_object(file_bytes: bytes, content_type: str, ext: str, key=None) -> str:
     if not MINIO_BUCKET:
-        raise RuntimeError("MINIO_BUCKET is required")
-    key = f"{uuid.uuid4().hex}{ext}"
+        raise StorageConfigurationError("MINIO_BUCKET is required")
+    if not MINIO_PUBLIC_URL:
+        raise StorageConfigurationError("MINIO_PUBLIC_URL is required")
+    key = key or f"{uuid.uuid4().hex}{ext}"
     client = _minio_client()
     _ensure_local_bucket(client)
     client.put_object(Bucket=MINIO_BUCKET, Key=key, Body=file_bytes, ContentType=content_type)
-    if not MINIO_PUBLIC_URL:
-        raise RuntimeError("MINIO_PUBLIC_URL is required")
     return f"{MINIO_PUBLIC_URL.rstrip('/')}/{quote(key, safe='/')}"
 
 
@@ -142,3 +147,91 @@ def put_file(file_bytes: bytes, content_type: str, ext: str = "") -> str:
     if STORAGE_BACKEND == "minio":
         return _put_minio_object(file_bytes, content_type, ext)
     raise RuntimeError("STORAGE_BACKEND must be either 'minio' or 'azure'")
+
+
+def put_review_file(file_bytes: bytes, content_type: str, ext: str):
+    """Use the configured storage backend for review photos and videos."""
+    folder = "videos" if content_type.startswith("video/") else "images"
+    key = f"reviews/{folder}/{uuid.uuid4().hex}{ext}"
+    if STORAGE_BACKEND == "azure":
+        return key, _put_azure_blob(file_bytes, content_type, ext, key=key)
+    if STORAGE_BACKEND == "minio":
+        return key, _put_minio_object(file_bytes, content_type, ext, key=key)
+    raise StorageConfigurationError("STORAGE_BACKEND must be either 'minio' or 'azure'")
+
+
+def _validate_review_key(key):
+    # Keep the original flat review paths readable for existing uploads.
+    if not re.fullmatch(
+        r"reviews/(?:(?:images/)?[a-f0-9]{32}\.(?:jpg|png|webp|gif)"
+        r"|(?:videos/)?[a-f0-9]{32}\.(?:mp4|webm))", key,
+    ):
+        raise ValueError("Invalid review media key")
+
+
+def delete_review_file(key: str):
+    _validate_review_key(key)
+    if STORAGE_BACKEND == "azure":
+        _azure_container_client().get_blob_client(key).delete_blob()
+    elif STORAGE_BACKEND == "minio":
+        _minio_client().delete_object(Bucket=MINIO_BUCKET, Key=key)
+    else:
+        raise StorageConfigurationError("STORAGE_BACKEND must be either 'minio' or 'azure'")
+
+
+class InvalidMediaRange(ValueError):
+    def __init__(self, total):
+        self.total = total
+        super().__init__("Invalid media byte range")
+
+
+def _review_media_range(total, range_header):
+    start, end = 0, total - 1
+    if range_header:
+        match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+        if not match or not any(match.groups()) or total == 0:
+            raise InvalidMediaRange(total)
+        first, last = match.groups()
+        if first:
+            start = int(first)
+            end = min(int(last), total - 1) if last else total - 1
+        else:
+            suffix = int(last)
+            if suffix == 0:
+                raise InvalidMediaRange(total)
+            start = max(0, total - suffix)
+        if start >= total or end < start:
+            raise InvalidMediaRange(total)
+    return start, end
+
+
+def get_review_media(key: str, range_header=None):
+    """Stream review media from either backend, including video byte ranges."""
+    _validate_review_key(key)
+    if STORAGE_BACKEND == "minio":
+        client = _minio_client()
+        properties = client.head_object(Bucket=MINIO_BUCKET, Key=key)
+        total = properties["ContentLength"]
+        start, end = _review_media_range(total, range_header)
+        options = {"Range": f"bytes={start}-{end}"} if range_header else {}
+        download = client.get_object(Bucket=MINIO_BUCKET, Key=key, **options)
+
+        def chunks():
+            try:
+                yield from download["Body"].iter_chunks(chunk_size=64 * 1024)
+            finally:
+                download["Body"].close()
+
+        return chunks(), properties.get("ContentType") or "application/octet-stream", total, start, end
+    if STORAGE_BACKEND != "azure":
+        raise StorageConfigurationError("STORAGE_BACKEND must be either 'minio' or 'azure'")
+    blob = _azure_container_client().get_blob_client(key)
+    properties = blob.get_blob_properties()
+    total = properties.size
+    content_type = properties.content_settings.content_type or "application/octet-stream"
+    start, end = _review_media_range(total, range_header)
+    if range_header:
+        download = blob.download_blob(offset=start, length=end - start + 1)
+    else:
+        download = blob.download_blob()
+    return download.chunks(), content_type, total, start, end

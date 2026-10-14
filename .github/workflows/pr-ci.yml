@@ -13,6 +13,22 @@ concurrency:
 
 jobs:
 
+  deployment-test:
+    name: Container Apps workflow tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install workflow test dependency
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
+      - name: Check shell syntax and exercise mocked rollback
+        run: |
+          bash -n scripts/check-container-apps.sh
+          bash -n scripts/deploy-container-apps.sh
+          python -m unittest discover -s scripts/tests -v
+
   # =========================================================
   # Backend Tests
   # =========================================================
@@ -213,6 +229,7 @@ jobs:
       - sast
       - security
       - policy
+      - deployment-test
 
     runs-on: ubuntu-latest
 
@@ -224,6 +241,7 @@ jobs:
           SAST: ${{ needs.sast.result }}
           SECURITY: ${{ needs.security.result }}
           POLICY: ${{ needs.policy.result }}
+          DEPLOYMENT: ${{ needs.deployment-test.result }}
 
         run: |
           echo "Backend:  $BACKEND"
@@ -231,13 +249,15 @@ jobs:
           echo "SAST:     $SAST"
           echo "Security: $SECURITY"
           echo "Policy:   $POLICY"
+          echo "Deployment: $DEPLOYMENT"
 
           for result in \
             "$BACKEND" \
             "$FRONTEND" \
             "$SAST" \
             "$SECURITY" \
-            "$POLICY"
+            "$POLICY" \
+            "$DEPLOYMENT"
           do
             if [ "$result" != "success" ]; then
               echo "::error::One or more required CI checks failed."

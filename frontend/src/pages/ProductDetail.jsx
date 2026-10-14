@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiUrl } from '../api'
+import ProductReviews from '../components/ProductReviews'
 
 function getApiBase() {
   if (window.__ENV__?.API_BASE?.trim()) return window.__ENV__.API_BASE
@@ -70,5 +71,6 @@ export default function ProductDetail() {
       </section>
     </section>
     {related.length > 0 && <section className="related-products"><div><p className="eyebrow">You may also like</p><h2>More from the shop</h2></div><div className="related-grid">{related.map(item => <Link className="related-card" key={item.id} to={`/products/${item.id}`}>{(item.images?.[0] || item.image_url) && <img src={item.images?.[0] || item.image_url} alt={item.name} />}<span>{item.name}</span><strong>${Number(item.price).toFixed(2)}</strong></Link>)}</div></section>}
+    <ProductReviews key={product.id} productId={product.id} api={API} />
   </main>
 }

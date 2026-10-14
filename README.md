@@ -189,6 +189,55 @@ old MinIO deployment. Keep the existing MinIO volume until migration is verified
 See [Azure Blob read access](https://learn.microsoft.com/en-us/azure/storage/blobs/anonymous-read-access-overview)
 for access configuration.
 
+### Customer reviews and unboxing media
+
+Customers can open **My Orders** and select **Review product** after an admin
+marks their order delivered. Each customer can publish one review per product
+in each delivered order, with a 1–5 star rating, a comment, and optional photos
+or unboxing videos. Product pages show the public reviews, average rating and
+verified-purchase badges. Different colours in one order share the same review.
+
+Review media follows `STORAGE_BACKEND`, just like product images. Local Compose
+uses **MinIO** and the existing `MINIO_BUCKET`, with browser URLs under
+`/uploads/reviews/`. Production uses **Azure Blob Storage** and the existing
+`AZURE_STORAGE_CONTAINER`. Inside that container, uploads use separate folders:
+
+```text
+products/<random-id>.<extension>         # Product images
+reviews/images/<random-id>.<extension>  # Customer review photos
+reviews/videos/<random-id>.<extension>  # Unboxing videos
+```
+
+MinIO uses the same review folders locally. Existing flat `reviews/<random-id>`
+media URLs remain readable; new uploads use the folders above.
+The database stores review details and object references, not the photo/video
+bytes. In production, the existing Azure managed identity and storage
+configuration are reused; account keys are
+not sent to the browser. Private blobs are streamed through the API, with HTTP
+byte ranges for video playback and seeking. `AZURE_BLOB_PUBLIC_URL` can serve
+them through your existing public container/CDN instead.
+
+Use JPEG, PNG, WebP or GIF photos (up to 5 MB each), and MP4 or WebM videos
+(up to 30 MB each). A review supports up to six files, totalling at most 40 MB.
+The API validates file types and sizes, checks order ownership and delivery,
+and blocks duplicate submissions. Failed uploads roll back the review and
+attempt to remove any blobs already uploaded by that submission.
+
+Deploy the updated API and frontend images together. The API creates the new
+`product_reviews` and `review_media` tables at startup using the existing
+additive schema setup. The identity needs Blob read/write/delete access to
+the existing container, including the `reviews/` prefix. Keep
+`AZURE_BLOB_PROXY_URL` set to the browser-reachable API image route as described
+above. Any gateway in front of the API must accept the 40 MB multipart upload
+plus its small form overhead; the repository's Nginx limit is already 50 MB.
+
+Local media testing needs no Azure credentials: run `docker compose up -d --build`
+to use MinIO for product images and review attachments. When deploying to Azure,
+use `docker-compose.prod.yml` (`STORAGE_BACKEND=azure`) with the Blob account,
+container and identity settings described above. Existing MinIO review files and
+their database URLs need to be copied/updated if they should move to Azure;
+changing the backend affects new uploads and does not migrate existing objects.
+
 ### Local MinIO testing
 
 The default `docker-compose.yml` continues to use MinIO:
@@ -256,5 +305,10 @@ GitHub OIDC; no long-lived Azure client secret or kubeconfig is required.
 See [CI/CD setup and operations](docs/cicd.md) for the required GitHub
 Environment, repository variables, Azure roles, approval flow, and rollback
 procedure.
+
+For Azure Container Apps, run **Rollback Container Apps** in GitHub Actions
+with the Build Release run ID of a known-good deployment and a reason. It
+restores both API and frontend image digests using the existing production
+environment and OIDC identity. See the [Container Apps rollback procedure](docs/cicd.md#roll-back-azure-container-apps).
 
 .......

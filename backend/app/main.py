@@ -12,7 +12,7 @@ import logging
 import time
 import uuid
 
-from . import database, models, crud, schemas, security, storage, email_service, rate_limit
+from . import database, models, crud, schemas, security, storage, email_service, rate_limit, reviews
 from .chat_realtime import chat_connections
 from .observability import configure_logging
 from .deps import get_current_user, get_current_admin
@@ -21,6 +21,7 @@ from .deps import get_current_user, get_current_admin
 configure_logging()
 logger = logging.getLogger("shop.api")
 app = FastAPI(title="Simple Shop API (v3-fix)")
+app.include_router(reviews.router)
 
 cors_origins = [
     origin.strip() for origin in os.getenv(
@@ -230,7 +231,9 @@ def logout(user=Depends(get_current_user)):
 # =========================
 
 @app.get("/files/images/{key:path}")
-def read_image(key: str):
+def read_image(key: str, request: Request):
+    if key.startswith("reviews/"):
+        return reviews.read_review_media(key, request.headers.get("range"))
     # Product images are visible to shop visitors; Azure credentials stay server-side.
     try:
         chunks, content_type, size = storage.get_image(key)

@@ -1,5 +1,5 @@
 import json
-from sqlalchemy import Column, Integer, String, Float, Text, Boolean, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Float, Text, Boolean, ForeignKey, DateTime, UniqueConstraint, CheckConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -66,6 +66,7 @@ class Order(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    reviews = relationship("ProductReview", back_populates="order", cascade="all, delete-orphan")
 
 class OrderItem(Base):
     __tablename__ = "order_items"
@@ -77,6 +78,38 @@ class OrderItem(Base):
     quantity = Column(Integer, nullable=False)
     selected_color = Column(String, nullable=True)
     order = relationship("Order", back_populates="items")
+
+    @property
+    def reviewed(self):
+        return any(review.product_id == self.product_id for review in self.order.reviews)
+
+
+class ProductReview(Base):
+    __tablename__ = "product_reviews"
+    __table_args__ = (
+        UniqueConstraint("order_id", "product_id", name="uq_review_order_product"),
+        CheckConstraint("rating BETWEEN 1 AND 5", name="ck_review_rating"),
+    )
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    product_id = Column(Integer, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    author_name = Column(String(120), nullable=False)
+    rating = Column(Integer, nullable=False)
+    comment = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    order = relationship("Order", back_populates="reviews")
+    media = relationship("ReviewMedia", cascade="all, delete-orphan", order_by="ReviewMedia.id")
+
+
+class ReviewMedia(Base):
+    __tablename__ = "review_media"
+    id = Column(Integer, primary_key=True)
+    review_id = Column(Integer, ForeignKey("product_reviews.id"), nullable=False, index=True)
+    blob_key = Column(String(120), unique=True, nullable=False)
+    url = Column(String(2048), nullable=False)
+    kind = Column(String(10), nullable=False)
+    content_type = Column(String(80), nullable=False)
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"

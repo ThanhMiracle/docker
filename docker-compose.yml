@@ -18,6 +18,12 @@ services:
       - SMTP_FROM=${SMTP_FROM:-}
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - STORAGE_BACKEND=minio
+      # Optional Azure settings for deployments that switch STORAGE_BACKEND to azure.
+      - AZURE_STORAGE_ACCOUNT_URL=${AZURE_STORAGE_ACCOUNT_URL:-}
+      - AZURE_STORAGE_CONTAINER=${AZURE_STORAGE_CONTAINER:-products}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_STORAGE_CONNECTION_STRING=${AZURE_STORAGE_CONNECTION_STRING:-}
+      - AZURE_BLOB_PROXY_URL=${AZURE_BLOB_PROXY_URL:-/api/files/images}
       - MINIO_BUCKET=${MINIO_BUCKET:-uploads}
       # Browser-facing URL. Nginx proxies this path to the local MinIO service.
       - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL:-http://localhost/uploads}

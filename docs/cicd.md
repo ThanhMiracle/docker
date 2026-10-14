@@ -118,12 +118,14 @@ Optional repository/environment variables override these defaults:
 | `FRONTEND_CONTAINER_APP` | `myapp-prod-fe` |
 | `BACKEND_CONTAINER_NAME` | `backend` |
 | `FRONTEND_CONTAINER_NAME` | `frontend` |
-| `CONTAINER_APPS_API_BASE` | Backend app HTTPS origin; override for a browser-facing gateway/custom domain |
+| `CONTAINER_APPS_API_BASE` | `/api`; override for a browser-facing gateway/custom domain |
 
 Both apps must use Single revision mode, with HTTP ingress target ports `8000`
 for the API and `8080` for the frontend. The workflow updates images and sets the
-frontend `API_BASE` to the backend app's HTTPS origin, or `CONTAINER_APPS_API_BASE`
-when supplied. The origin is resolved even when private networking prevents
+frontend `API_BASE` to `/api`, or `CONTAINER_APPS_API_BASE` when supplied.
+Your gateway must route `/api` to the backend. For direct browser access, set
+this variable to the backend's browser-reachable HTTPS origin without `/api`.
+The origin is resolved even when private networking prevents
 public runner smoke tests. Since this path does not deploy the Nginx proxy,
 the direct backend origin does not include `/api`. Configure database/storage
 secrets, managed identities and other runtime settings on the apps before
@@ -140,7 +142,44 @@ on revision readiness; configure appropriate readiness probes on those apps.
 Failures report revision diagnostics without automatically rolling back.
 If the frontend fails after the backend succeeds, the backend remains updated;
 inspect the deployment summary before deciding how to recover. The AKS rollback
-workflow does not roll back Container Apps.
+workflow does not roll back Container Apps. Use `Rollback Container Apps` for
+this deployment path.
+
+### Roll back Azure Container Apps
+
+1. Open a previous successful `Deploy Container Apps` run and find its Build
+   Release run ID in the summary. Choose a release you have verified worked.
+2. In GitHub **Actions**, select **Rollback Container Apps** -> **Run workflow**
+   on `master`. Enter that `release_run_id` and a nonempty `reason` (include your
+   incident/change ticket when applicable).
+3. Approve the `production` environment if required reviewers are configured.
+4. Check the rollback summary for success, both restored digests and the new
+   `rb<run-id>-<attempt>` revisions.
+
+The rollback verifies that the selected run is a successful `Build Release`
+push on `master` in this repository, checks its evidence checksum and matches
+the manifest to the run's commit and attempt. It restores the API and frontend
+images by immutable digest without rebuilding them. The release evidence must
+still exist (currently retained for 90 days), and ACR must retain the images.
+
+Both apps are checked before either is changed. The backend is restored and
+verified first, followed by the frontend, using the same health verification
+as deployment. Private apps rely on Azure revision readiness; public apps also
+run HTTP smoke tests. Current environment variables, secrets, managed identities,
+ingress and frontend `API_BASE` are preserved. This is an image rollback:
+database/schema changes, data and earlier app configuration are not restored.
+Ensure the selected images work with the current schema and settings.
+
+Deployment and rollback share a concurrency group, so they cannot update the
+apps simultaneously. Rollback is manual; a later successful Build Release still
+triggers the normal deployment workflow. Pause new releases while investigating
+an incident if you need the restored version to remain deployed.
+
+The two app updates are sequential. If the frontend fails after the backend
+passes, the backend stays restored; inspect the summary and diagnostics before
+retrying or selecting another release. No additional rollback is triggered on
+failure. The existing OIDC identity and Container Apps variables are reused;
+no new Azure secrets are required.
 
 See the [Azure CLI update reference](https://learn.microsoft.com/en-us/cli/azure/containerapp#az-containerapp-update)
 and [Container Apps revision behavior](https://learn.microsoft.com/en-us/azure/container-apps/revisions).

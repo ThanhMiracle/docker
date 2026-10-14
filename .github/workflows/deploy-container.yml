@@ -48,6 +48,9 @@ jobs:
       BUILD_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
 
     steps:
+      - name: Checkout pipeline scripts
+        uses: actions/checkout@v6
+
       - name: Download release evidence from successful build
         uses: actions/download-artifact@v4
         with:
@@ -104,71 +107,7 @@ jobs:
 
       - name: Check Container Apps, ACR configuration, and network accessibility
         id: apps
-        run: |
-          set -euo pipefail
-          az extension add --name containerapp --upgrade --only-show-errors
-
-          check_app() {
-            local app="$1" container="$2" port="$3" output="$4"
-            local app_json environment_id environment_json
-            local ingress_external environment_internal public_network_access
-            local fqdn url=""
-
-            app_json="$(az containerapp show \
-              --name "$app" --resource-group "$RESOURCE_GROUP" \
-              --output json --only-show-errors)"
-
-            # Keep configured ingress, pull identity, secrets, ports and traffic policy.
-            jq -e --arg container "$container" --arg registry "$ACR_LOGIN_SERVER" --argjson port "$port" '
-              .properties.configuration.activeRevisionsMode == "Single" and
-              .properties.configuration.ingress.targetPort == $port and
-              ([.properties.template.containers[] | select(.name == $container)] | length == 1) and
-              any(.properties.configuration.registries[]?;
-                .server == $registry and
-                ((.identity // "") != "" or
-                 ((.username // "") != "" and (.passwordSecretRef // "") != "")))
-            ' <<< "$app_json" > /dev/null || {
-              echo "::error::$app requires container $container, port $port, Single revision mode, and an ACR pull identity or credentials for $ACR_LOGIN_SERVER."
-              exit 1
-            }
-
-            # An app can have external ingress while its ENVIRONMENT is internal.
-            # Such an FQDN is private and cannot be probed by GitHub-hosted runners.
-            environment_id="$(jq -er '
-              (.properties.managedEnvironmentId // .properties.environmentId)
-              | select(type == "string" and length > 0)
-            ' <<< "$app_json")"
-
-            environment_json="$(az containerapp env show \
-              --ids "$environment_id" --output json --only-show-errors)"
-
-            environment_internal="$(jq -r '.properties.vnetConfiguration.internal // false' <<< "$environment_json")"
-            public_network_access="$(jq -r '.properties.publicNetworkAccess // "Enabled"' <<< "$environment_json")"
-            ingress_external="$(jq -r '.properties.configuration.ingress.external // false' <<< "$app_json")"
-            fqdn="$(jq -er '
-              .properties.configuration.ingress.fqdn
-              | select(type == "string" and length > 0)
-            ' <<< "$app_json")"
-            # App origins can be private; browser traffic uses the public gateway.
-            printf '%s_origin=https://%s\n' "$output" "$fqdn" >> "$GITHUB_OUTPUT"
-
-            if [[ "$environment_internal" == "true" ]]; then
-              echo "::notice::$app is in an internal Container Apps environment; skipping public HTTP smoke tests."
-            elif [[ "$public_network_access" == "Disabled" ]]; then
-              echo "::notice::$app has public network access disabled; skipping public HTTP smoke tests."
-            elif [[ "$ingress_external" != "true" ]]; then
-              echo "::notice::$app uses app-internal ingress; skipping public HTTP smoke tests."
-            else
-              url="https://$fqdn"
-              echo "Public smoke test is enabled for $app: $url"
-            fi
-
-            # Empty URL signals that only Azure revision readiness is tested.
-            printf '%s_url=%s\n' "$output" "$url" >> "$GITHUB_OUTPUT"
-          }
-
-          check_app "$BACKEND_APP" "$BACKEND_CONTAINER" 8000 backend
-          check_app "$FRONTEND_APP" "$FRONTEND_CONTAINER" 8080 frontend
+        run: bash scripts/check-container-apps.sh
 
       - name: Deploy and verify backend, then frontend
         id: deploy
@@ -178,104 +117,7 @@ jobs:
           BACKEND_URL: ${{ steps.apps.outputs.backend_url }}
           FRONTEND_URL: ${{ steps.apps.outputs.frontend_url }}
           FRONTEND_API_BASE: ${{ vars.CONTAINER_APPS_API_BASE || '/api' }}
-        run: |
-          set -euo pipefail
-          test -n "$FRONTEND_API_BASE"
-
-          deploy_app() {
-            local app="$1" container="$2" image="$3" output="$4" url="$5"
-            local suffix="gh${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            local revision revision_json app_json state
-            local -a paths
-            local -a runtime_args=()
-
-            if [[ "$output" == "frontend" ]]; then
-              # Front Door and Application Gateway route /api to the private backend.
-              runtime_args=(--set-env-vars "API_BASE=$FRONTEND_API_BASE")
-            fi
-
-            revision="$(az containerapp update \
-              --name "$app" --resource-group "$RESOURCE_GROUP" \
-              --container-name "$container" --image "$image" \
-              "${runtime_args[@]}" \
-              --revision-suffix "$suffix" \
-              --query properties.latestRevisionName --output tsv --only-show-errors)"
-
-            if [[ "$revision" != "$app--$suffix" ]]; then
-              echo "::error::Unexpected revision for $app: $revision"
-              exit 1
-            fi
-
-            printf '%s_revision=%s\n' "$output" "$revision" >> "$GITHUB_OUTPUT"
-
-            # Verify the new image, healthy revision, and ready traffic target.
-            for attempt in {1..60}; do
-              revision_json="$(az containerapp revision show \
-                --name "$app" --resource-group "$RESOURCE_GROUP" \
-                --revision "$revision" --output json --only-show-errors)"
-              app_json="$(az containerapp show \
-                --name "$app" --resource-group "$RESOURCE_GROUP" \
-                --output json --only-show-errors)"
-
-              if jq -e --arg container "$container" --arg image "$image" '
-                .properties.active == true and
-                .properties.provisioningState == "Provisioned" and
-                .properties.healthState == "Healthy" and
-                any(.properties.template.containers[]; .name == $container and .image == $image)
-              ' <<< "$revision_json" > /dev/null &&
-                [[ "$(jq -r '.properties.latestReadyRevisionName' <<< "$app_json")" == "$revision" ]]; then
-                echo "$app is serving verified revision $revision."
-                break
-              fi
-
-              state="$(jq -r '.properties.provisioningState' <<< "$revision_json")"
-              if [[ "$state" == "Failed" || "$state" == "ProvisioningFailed" || "$attempt" == 60 ]]; then
-                echo "::error::$app revision $revision failed to become healthy and ready (state: $state)."
-                exit 1
-              fi
-
-              echo "Waiting for $app revision $revision ($attempt/60)..."
-              sleep 10
-            done
-
-            if [[ -z "$url" ]]; then
-              echo "::notice::$app revision is healthy; private HTTP smoke test skipped."
-              return 0
-            fi
-
-            # Public HTTP checks only if the app AND environment allow them.
-            # Backend health endpoints are /health and /ready (not /api/health).
-            if [[ "$output" == "backend" ]]; then
-              paths=(/health /ready)
-            else
-              paths=(/)
-            fi
-
-            for path in "${paths[@]}"; do
-              curl --fail --silent --show-error --location \
-                --connect-timeout 10 --max-time 30 \
-                --retry 5 --retry-delay 10 --retry-all-errors \
-                --output /dev/null "$url$path"
-              echo "Smoke test passed: $app $path"
-            done
-
-            if [[ "$output" == "frontend" ]]; then
-              # HTTP 200 alone can conceal an empty or cached runtime configuration.
-              curl --fail --silent --show-error --location \
-                --connect-timeout 10 --max-time 30 \
-                --retry 5 --retry-delay 10 --retry-all-errors \
-                --output "$RUNNER_TEMP/frontend-env.js" "$url/env.js?deployment=$suffix"
-              grep -F -- "\"$FRONTEND_API_BASE\"" "$RUNNER_TEMP/frontend-env.js" > /dev/null || {
-                echo "::error::Frontend env.js does not contain the deployed API_BASE."
-                exit 1
-              }
-              echo "Runtime configuration check passed: $app /env.js"
-            fi
-          }
-
-          # Preserve app secrets and identities; supply frontend browser routing.
-          deploy_app "$BACKEND_APP" "$BACKEND_CONTAINER" "$BACKEND_IMAGE" backend "$BACKEND_URL"
-          deploy_app "$FRONTEND_APP" "$FRONTEND_CONTAINER" "$FRONTEND_IMAGE" frontend "$FRONTEND_URL"
+        run: bash scripts/deploy-container-apps.sh
 
       - name: Collect revision diagnostics on failure
         if: failure()
