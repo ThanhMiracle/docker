@@ -1,3 +1,5 @@
+import pytest
+
 from app import models
 from conftest import TestingSessionLocal
 
@@ -18,6 +20,42 @@ def test_profile_is_saved_and_returned(client, login_user):
     assert response.status_code == 200
     assert response.json()["phone"] == "+84 900 111 222"
     assert response.json()["delivery_address"] == "12 Nguyen Hue, Ho Chi Minh City"
+
+
+def test_profile_name_can_change_without_delivery_details_and_survives_login(client, login_user):
+    token = login_user("rename@example.com", name="Original Name")
+    response = client.put("/profile", json={"name": "  Nguyễn Thanh  "}, headers=headers(token))
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Nguyễn Thanh"
+    assert response.json()["phone"] is None
+    assert response.json()["delivery_address"] is None
+    assert client.get("/profile", headers=headers(token)).json()["name"] == "Nguyễn Thanh"
+    login = client.post("/auth/login", data={"username": "rename@example.com", "password": "secret123"})
+    assert login.status_code == 200, login.text
+    assert client.get("/profile", headers=headers(login.json()["access_token"])).json()["name"] == "Nguyễn Thanh"
+
+
+def test_rename_preserves_delivery_details_and_other_accounts(client, login_user):
+    token = login_user("rename-owner@example.com", name="Original Name")
+    other = login_user("rename-other@example.com", name="Other Customer")
+    details = {"phone": "0900111222", "delivery_address": "1 Test Street"}
+    assert client.put("/profile", json=details, headers=headers(token)).status_code == 200
+    response = client.put("/profile", json={"name": "New Name"}, headers=headers(token))
+    assert response.status_code == 200, response.text
+    assert response.json() == dict(details, name="New Name", email="rename-owner@example.com")
+    assert client.get("/profile", headers=headers(other)).json()["name"] == "Other Customer"
+
+
+@pytest.mark.parametrize("name", ["", "   ", "a" * 121, None, 123])
+def test_invalid_profile_names_do_not_overwrite_user(client, login_user, name):
+    token = login_user("invalid-name@example.com", name="Original Name")
+    response = client.put("/profile", json={"name": name}, headers=headers(token))
+    assert response.status_code == 422, response.text
+    assert client.get("/profile", headers=headers(token)).json()["name"] == "Original Name"
+
+
+def test_profile_name_update_requires_login(client):
+    assert client.put("/profile", json={"name": "New Name"}).status_code == 401
 
 
 def test_inventory_and_admin_order_progression(client, login_user, monkeypatch):

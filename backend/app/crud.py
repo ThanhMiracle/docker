@@ -49,8 +49,9 @@ def get_user_by_email(db: Session, email: str):
     )
 
 def update_user_profile(db: Session, user, data: dict):
-    user.phone = data["phone"].strip()
-    user.delivery_address = data["delivery_address"].strip()
+    for field in ("name", "phone", "delivery_address"):
+        if field in data:
+            setattr(user, field, data[field].strip())
     db.commit()
     db.refresh(user)
     return user

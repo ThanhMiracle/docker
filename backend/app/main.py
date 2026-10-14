@@ -93,7 +93,7 @@ def update_profile(
     db: Session = Depends(database.get_db),
     user=Depends(get_current_user),
 ):
-    return crud.update_user_profile(db, user, data.model_dump())
+    return crud.update_user_profile(db, user, data.model_dump(exclude_unset=True))
 
 
 # =========================

@@ -38,8 +38,17 @@ class UserProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class UserProfileUpdate(BaseModel):
-    phone: str = Field(min_length=3, max_length=40)
-    delivery_address: str = Field(min_length=5, max_length=500)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    phone: Optional[str] = Field(default=None, min_length=3, max_length=40)
+    delivery_address: Optional[str] = Field(default=None, min_length=5, max_length=500)
+
+    @field_validator("name", "phone", "delivery_address", mode="before")
+    @classmethod
+    def validate_profile_field(cls, value):
+        if value is None:
+            raise ValueError("Profile fields must not be null")
+        return value.strip() if isinstance(value, str) else value
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
