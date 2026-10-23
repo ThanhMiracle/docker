@@ -1,7 +1,7 @@
 param(
     [string]$Repository = 'ThanhMiracle/docker',
     [string]$ProductionReviewer = 'ThanhMiracle',
-    [ValidateRange(0, 6)][int]$PullRequestApprovals = 1
+    [ValidateRange(0, 6)][int]$PullRequestApprovals = 0
 )
 $ErrorActionPreference = 'Stop'
 
@@ -34,6 +34,55 @@ $branchPolicies = $branchPoliciesRaw | ConvertFrom-Json
 if (-not ($branchPolicies.branch_policies | Where-Object { $_.name -eq 'main' -and $_.type -eq 'branch' })) {
     Invoke-GitHubJson POST "repos/$Repository/environments/production/deployment-branch-policies" @{
         name = 'main'; type = 'branch'
+    }
+}
+
+# Rulesets and classic branch protection are enforced together. Updating only
+# classic protection leaves an existing last-push approval rule blocking solo PRs.
+$mainRulesRaw = & gh api --paginate --slurp "repos/$Repository/rules/branches/main?per_page=100"
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read main rulesets' }
+$mainRules = @($mainRulesRaw | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object { $_ })
+$reviewRulesetIds = @($mainRules | Where-Object {
+    $_.type -eq 'pull_request' -and $_.ruleset_source_type -eq 'Repository' -and $_.ruleset_source -eq $Repository
+} | Select-Object -ExpandProperty ruleset_id -Unique)
+foreach ($rulesetId in $reviewRulesetIds) {
+    $rulesetRaw = & gh api "repos/$Repository/rulesets/$rulesetId"
+    if ($LASTEXITCODE -ne 0) { throw "Cannot read ruleset $rulesetId" }
+    $ruleset = $rulesetRaw | ConvertFrom-Json
+    foreach ($rule in $ruleset.rules) {
+        if ($rule.type -eq 'required_status_checks') {
+            foreach ($check in $rule.parameters.required_status_checks) {
+                # GET returns null for an unrestricted integration; PUT requires
+                # this optional integer to be omitted instead.
+                if ($null -eq $check.integration_id) {
+                    $check.PSObject.Properties.Remove('integration_id')
+                }
+            }
+        }
+        if ($rule.type -ne 'pull_request') { continue }
+        $rule.parameters.required_approving_review_count = $PullRequestApprovals
+        $rule.parameters.require_last_push_approval = ($PullRequestApprovals -gt 0)
+        if ($PullRequestApprovals -eq 0) {
+            $rule.parameters.require_code_owner_review = $false
+            # GitHub may return additional review requirements in newer API versions.
+            foreach ($property in @('required_reviewers', 'require_extra_approval_for_unattributed_changes')) {
+                if ($rule.parameters.PSObject.Properties.Name -contains $property) {
+                    if ($property -eq 'required_reviewers') {
+                        $rule.parameters.$property = @()
+                    } else {
+                        $rule.parameters.$property = $false
+                    }
+                }
+            }
+        }
+    }
+    Invoke-GitHubJson PUT "repos/$Repository/rulesets/$rulesetId" @{
+        name = $ruleset.name
+        target = $ruleset.target
+        enforcement = $ruleset.enforcement
+        bypass_actors = @($ruleset.bypass_actors)
+        conditions = $ruleset.conditions
+        rules = @($ruleset.rules)
     }
 }
 
