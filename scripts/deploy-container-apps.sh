@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 test -n "$FRONTEND_API_BASE"
+test -n "${BACKEND_URL:?Backend origin is required for the health gate}"
+test -n "${FRONTEND_URL:?Frontend origin is required for the health gate}"
 
 deploy_app() {
   local app="$1" container="$2" image="$3" output="$4" url="$5"
@@ -58,15 +60,10 @@ deploy_app() {
     sleep 10
   done
 
-  if [[ -z "$url" ]]; then
-    echo "::notice::$app revision is healthy; private HTTP smoke test skipped."
-    return 0
-  fi
-
-  # Public HTTP checks only if the app AND environment allow them.
+  # Check private and public origins using the deployment runner's network.
   # Backend health endpoints are /health and /ready (not /api/health).
   if [[ "$output" == "backend" ]]; then
-    paths=(/health /ready)
+    paths=(/health /ready '/products/?limit=1')
   else
     paths=(/)
   fi

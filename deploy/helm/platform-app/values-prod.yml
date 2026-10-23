@@ -1,0 +1,10 @@
+# Application settings only; Azure resources and identities are provisioned separately.
+minio:
+  enabled: false
+keyVault:
+  enabled: false
+api:
+  env:
+    STORAGE_BACKEND: azure
+    AZURE_STORAGE_AUTO_CREATE_CONTAINER: "false"
+    AZURE_BLOB_PROXY_URL: /api/files/images

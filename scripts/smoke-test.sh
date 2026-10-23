@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Pass the public production URL explicitly so the test verifies the same path
-# customers use. Example: ./scripts/smoke-test.sh https://shop.example.com
-base_url="${1:?Usage: smoke-test.sh <public-base-url>}"
+base_url="${1:?Usage: smoke-test.sh <application-url> [api-base-url]}"
 base_url="${base_url%/}"
+api_url="${2:-$base_url/api}"
+api_url="${api_url%/}"
+request() {
+  curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+    --connect-timeout 10 --max-time 30 "$1"
+}
 
-curl --fail --silent --show-error --retry 3 --retry-all-errors \
-  --connect-timeout 10 --max-time 30 \
-  "${base_url}/health" >/dev/null
+# Verify the customer route, not just the Azure control-plane revision state.
+request "$base_url/" > /dev/null
+request "$api_url/health" | jq -e '.status == "ok"' > /dev/null
+request "$api_url/ready" | jq -e '.status == "ready"' > /dev/null
+request "$api_url/products/?limit=1" | jq -e \
+  'type == "object" and (.items | type == "array") and (.total | type == "number")' > /dev/null
 
-curl --fail --silent --show-error --retry 3 --retry-all-errors \
-  --connect-timeout 10 --max-time 30 \
-  "${base_url}/api/health" >/dev/null
-
-# Readiness includes a real database round-trip, so this also verifies the
-# most important application dependency from the customer-facing route.
-curl --fail --silent --show-error --retry 3 --retry-all-errors \
-  --connect-timeout 10 --max-time 30 \
-  "${base_url}/api/ready" >/dev/null
-
-echo "Smoke tests passed for ${base_url}"
+echo "Application, database readiness, and product read smoke tests passed."

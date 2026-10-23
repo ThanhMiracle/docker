@@ -24,7 +24,7 @@ concurrency:
 env:
   AKS_RG: ${{ vars.AKS_RESOURCE_GROUP }}
   AKS_NAME: ${{ vars.AKS_NAME }}
-  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER || vars.ACR_LOGIN_SERVER }}
   NAMESPACE: ${{ vars.K8S_NAMESPACE || 'platform' }}
   RELEASE_NAME: platform-app
   # Internal URL reachable from inside Kubernetes.
@@ -38,6 +38,7 @@ jobs:
   # 1. Resolve and validate Build Release
   # ==========================================================
   resolve-release:
+    if: ${{ vars.PRODUCTION_TARGET == 'aks' && github.ref == 'refs/heads/main' }}
     name: Validate release evidence
     runs-on: ubuntu-latest
     outputs:
@@ -154,9 +155,9 @@ jobs:
       # --------------------------------------------------------
       - name: Validate production configuration
         env:
-          AZURE_DEPLOY_CLIENT_ID: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_DEPLOY_CLIENT_ID: ${{ secrets.AZURE_DEPLOY_CLIENT_ID || vars.AZURE_DEPLOY_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
           # Bootstrap deployments use the existing Kubernetes Secret. Key Vault
           # is enabled later after its workload identity has been validated.
           KEY_VAULT_ENABLED: "false"
@@ -216,9 +217,9 @@ jobs:
       - name: Sign in to Azure with production OIDC identity
         uses: azure/login@v3
         with:
-          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZURE_DEPLOY_CLIENT_ID || vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
       # --------------------------------------------------------
       # Connect GitHub Runner to AKS
       # --------------------------------------------------------
@@ -311,7 +312,7 @@ jobs:
           KEY_VAULT_ENABLED: "false"
           KEY_VAULT_NAME: ${{ vars.KEY_VAULT_NAME }}
           API_KEYVAULT_CLIENT_ID: ${{ vars.API_KEYVAULT_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
         run: |
           set -euo pipefail
           key_vault_args=(
@@ -414,7 +415,7 @@ jobs:
             echo "- Commit: \`${{ needs.resolve-release.outputs.commit }}\`"
             echo "- Helm release: $RELEASE_NAME"
             echo "- Namespace: $NAMESPACE"
-            echo "- Deployment identity: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}"
+            echo "- Deployment identity: ${{ secrets.AZURE_DEPLOY_CLIENT_ID || vars.AZURE_DEPLOY_CLIENT_ID }}"
             echo "- Internal smoke test: \`$INTERNAL_SMOKE_URL\`"
             if [ -n "$PUBLIC_SMOKE_TEST_URL" ]; then
               echo "- Public smoke test: \`$PUBLIC_SMOKE_TEST_URL\`"

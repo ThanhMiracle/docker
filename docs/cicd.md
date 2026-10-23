@@ -1,212 +1,139 @@
-# GitHub Actions CI/CD for ACR and AKS
+# CI/CD application trên Azure Container Apps
 
-Luồng này tách riêng bốn trách nhiệm:
+Production dùng Azure Container Apps. Pipeline không phụ thuộc Jira hoặc AI và
+không provision hạ tầng Azure. AKS deploy/rollback được giữ lại cho trường hợp
+chuyển đích triển khai; chỉ chạy khi `PRODUCTION_TARGET=aks`.
 
-1. `pr-ci.yml`: kiểm tra Jira traceability, test, build, SAST, secret/dependency scan và Helm policy trên pull request.
-2. `release.yml`: chạy lại quality gate trên commit đã merge, build ba image đúng một lần, scan, push ACR, lấy digest và xuất SBOM/evidence.
-3. `deploy-prod.yml`: tải evidence theo release run ID, chờ approval của GitHub Environment, đăng nhập Azure bằng OIDC và deploy đúng digest bằng Helm.
-4. `rollback-prod.yml`: sau quyết định của con người, xác minh revision chứa đúng artifact cũ rồi rollback và chạy lại verification.
+## Luồng phát hành
 
-Workflow không tự rollback khi verification production thất bại. Log và event được thu thập để người có thẩm quyền chọn rollback, recovery, roll-forward hoặc pause.
+1. Mở PR vào `main`. `PR CI` chạy backend tests với PostgreSQL 16 thật, coverage
+   tối thiểu 70%, frontend tests, production build, dependency audit, Bandit,
+   Trivy secret/dependency scan, application deployment policy và deployment tests.
+2. Chỉ merge khi `Quality Gate` thành công. `Build Release` gọi lại cùng workflow
+   CI trên commit đã merge và yêu cầu commit đó thuộc một PR đã merge vào `main`.
+3. Build image runtime, scan HIGH/CRITICAL và secret với exit code khác 0 khi có
+   finding. Không bỏ qua lỗ hổng chưa có bản vá. Tạo CycloneDX SBOM, push ACR, lấy
+   digest và tạo signed build provenance bằng GitHub artifact attestations.
+4. `Deploy Container Apps` chỉ nhận release thành công từ `main` trong cùng
+   repository. Job chờ reviewer của Environment `production` phê duyệt. Reviewer
+   xem Build Release summary, các báo cáo và artifact `release-evidence` trước
+   khi approve.
+5. Xác minh checksum, commit, run ID, run attempt, registry và digest. Dùng OIDC
+   đăng nhập Azure; kiểm tra cả hai app và khả năng truy cập mạng trước khi update.
+6. Deploy backend theo digest, kiểm tra revision và HTTP `/health`, `/ready`,
+   `/products/?limit=1`; sau đó deploy frontend và kiểm tra `/`, `/env.js` cùng
+   `API_BASE`. Cuối cùng kiểm tra đường truy cập của người dùng, database readiness
+   và JSON danh sách sản phẩm. Chỉ sau đó workflow mới thành công.
 
-## 1. Repository rules
+Coverage 70% là ngưỡng khởi đầu của repository, không phải con số do HLD quy định.
+SBOM, signed provenance, image scan reports, manifest và checksum được giữ 90 ngày.
+JUnit/coverage, SAST và source scan có artifact riêng trong cùng release run.
 
-Cấu hình ruleset cho nhánh `master`:
+## GitHub Actions secrets cần điền
 
-- Require pull request và ít nhất một approval.
-- Require conversation resolution.
-- Require status check `PR CI / Quality Gate`.
-- Require CODEOWNERS review sau khi tạo `.github/CODEOWNERS` với GitHub team thực tế.
-- Chặn force push và branch deletion.
-- Không cho phép bypass ngoại trừ tài khoản break-glass được kiểm soát.
+Khai báo các giá trị dưới đây tại Repository Settings → Secrets and variables →
+Actions → Secrets. Workflow cũng chấp nhận Actions variables cùng tên; secrets
+được ưu tiên. Không cần Azure client secret hoặc kubeconfig dài hạn.
 
-Tên branch hoặc tiêu đề PR phải chứa Jira key, ví dụ
-`feature/APP-123-update-auth`.
-
-## 2. GitHub variables và secrets
-
-Repository variables dùng cho release:
-
-| Variable | Ý nghĩa |
+| Secret | Giá trị |
 |---|---|
-| `ACR_NAME` | Tên ACR, không gồm `.azurecr.io` |
-| `ACR_LOGIN_SERVER` | Ví dụ `myacr.azurecr.io` |
-| `AZURE_BUILD_CLIENT_ID` | Client ID của identity chỉ có quyền push ACR |
-| `AZURE_TENANT_ID` | Microsoft Entra tenant |
-| `AZURE_SUBSCRIPTION_ID` | Azure subscription |
+| `ACR_NAME` | Tên registry, không gồm `.azurecr.io` |
+| `ACR_LOGIN_SERVER` | `<ACR_NAME>.azurecr.io` |
+| `AZURE_BUILD_CLIENT_ID` | Client ID của identity build/push |
+| `AZURE_DEPLOY_CLIENT_ID` | Client ID của identity deployment |
+| `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Subscription chứa các app |
+| `PROD_SMOKE_TEST_URL` | Base URL frontend/gateway mà người dùng truy cập, gồm `https://` |
 
-Tạo GitHub Environment tên `production`, bật Required reviewers và chỉ cho
-deploy từ `master`. Khai báo các environment variables:
+Giữ database, SMTP, JWT và storage secrets đang chạy trên Container Apps.
+Pipeline này cập nhật image và frontend `API_BASE`; không ghi đè các secret đó.
 
-| Variable | Ý nghĩa |
+## Actions variables tùy chọn
+
+| Variable | Mặc định hoặc ý nghĩa |
 |---|---|
-| `AZURE_DEPLOY_CLIENT_ID` | Client ID của identity deploy AKS |
-| `AKS_RESOURCE_GROUP` | Resource group của AKS |
-| `AKS_NAME` | Tên AKS |
-| `K8S_NAMESPACE` | Mặc định `platform` |
-| `PROD_SMOKE_TEST_URL` | URL HTTPS public, không có dấu `/` cuối |
-| `KEY_VAULT_ENABLED` | `true` hoặc `false` |
-| `KEY_VAULT_NAME` | Bắt buộc khi Key Vault được bật |
-| `API_KEYVAULT_CLIENT_ID` | Workload Identity client ID của API |
-
-Environment secrets:
-
-- `DATABASE_URL`: bắt buộc khi `KEY_VAULT_ENABLED=false`; khi bật Key Vault, secret này có thể để trống.
-- `JWT_SECRET`, `ADMIN_EMAIL`.
-- `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`.
-- `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`.
-- `ALERT_WEBHOOK_URL` là tùy chọn.
-
-Không tạo `AZURE_CLIENT_SECRET` hoặc `KUBECONFIG_B64`.
-
-## 3. OIDC và least privilege
-
-Tạo hai app registration hoặc user-assigned managed identity độc lập.
-
-Build identity:
-
-- Federated subject: `repo:<org>/<repo>:ref:refs/heads/master`.
-- Role `AcrPush` chỉ tại scope ACR.
-
-Production deploy identity:
-
-- Federated subject: `repo:<org>/<repo>:environment:production`.
-- Role `Azure Kubernetes Service Cluster User Role` tại scope AKS.
-- Với AKS Azure RBAC, cấp thêm `Azure Kubernetes Service RBAC Writer` tại scope phù hợp. Với Kubernetes RBAC, tạo RoleBinding giới hạn trong namespace `platform`.
-- Không cấp quyền push ACR.
-
-AKS kubelet identity cần `AcrPull` tại scope ACR. API Workload Identity cần
-`Key Vault Secrets User` chỉ trên vault chứa secret ứng dụng.
-
-## 4. Release và deploy
-
-1. Tạo branch có Jira key, mở PR và hoàn thành review.
-2. Merge vào `master`; workflow `Build Release` tạo artifact
-   `release-evidence` gồm manifest, ba SBOM và checksum.
-3. Lấy run ID từ summary của workflow thành công.
-4. Chạy `Deploy Production` với `release_run_id` và Jira key ghi trong manifest.
-5. Reviewer kiểm tra Jira, PR, scan, SBOM và các digest ở job
-   `Validate release evidence`, sau đó approve environment `production`.
-6. Workflow deploy đúng ba reference dạng `repository@sha256:...`, kiểm tra rollout, readiness database, service endpoints, smoke test và digest thực tế trên Pod.
-
-Manifest release là liên kết giữa Jira key, PR, commit, workflow run, image
-digests và SBOM. Deployment ghi commit, Jira key và release run ID vào Pod
-annotations; GitHub Environment và Azure Activity Log giữ evidence approval và
-identity thực thi.
-
-## Azure Container Apps deployment
-
-`Deploy Container Apps` runs automatically after a successful `Build Release`
-push on `master`. It consumes that run's `release-evidence` artifact and deploys
-the API and frontend by digest. The existing AKS deploy/rollback workflows remain
-manual and operate independently.
-
-The Container Apps job uses the same `production` GitHub Environment and OIDC
-variables as the AKS deployment. Required reviewers configured on that environment
-also apply to this job. The deploy identity needs `Container Apps Contributor`
-on the existing apps (or their resource group); AKS roles alone are insufficient.
-The apps must already have working ACR pull credentials or a managed identity
-with registry pull access. The workflow checks the registry configuration;
-revision readiness verifies that the actual image pull succeeds.
-
-Optional repository/environment variables override these defaults:
-
-| Variable | Default |
-|---|---|
+| `PRODUCTION_TARGET` | `container-apps`; đặt `aks` để chuyển sang các workflow AKS thủ công |
 | `CONTAINER_APPS_RESOURCE_GROUP` | `ThanhDT03-Lab` |
 | `BACKEND_CONTAINER_APP` | `myapp-prod-be` |
 | `FRONTEND_CONTAINER_APP` | `myapp-prod-fe` |
 | `BACKEND_CONTAINER_NAME` | `backend` |
 | `FRONTEND_CONTAINER_NAME` | `frontend` |
-| `CONTAINER_APPS_API_BASE` | `/api`; override for a browser-facing gateway/custom domain |
+| `CONTAINER_APPS_API_BASE` | `/api`; có thể dùng URL HTTPS backend tuyệt đối |
+| `DEPLOY_RUNNER_LABELS` | JSON array, mặc định `["ubuntu-latest"]` |
 
-Both apps must use Single revision mode, with HTTP ingress target ports `8000`
-for the API and `8080` for the frontend. The workflow updates images and sets the
-frontend `API_BASE` to `/api`, or `CONTAINER_APPS_API_BASE` when supplied.
-Your gateway must route `/api` to the backend. For direct browser access, set
-this variable to the backend's browser-reachable HTTPS origin without `/api`.
-The origin is resolved even when private networking prevents
-public runner smoke tests. Since this path does not deploy the Nginx proxy,
-the direct backend origin does not include `/api`. Configure database/storage
-secrets, managed identities and other runtime settings on the apps before
-deploying. Set backend `CORS_ORIGINS` and `FRONTEND_BASE_URL` to the frontend origin, and
-`AZURE_BLOB_PROXY_URL` to the backend origin plus `/files/images` when using
-private Blob Storage.
+Ví dụ runner trên private network:
+`["self-hosted","linux","x64","production-network"]`.
+Runner cần `bash`, Azure CLI, `gh`, `jq`, `curl`, khả năng tải action và kết nối
+registry. Private app phải có DNS/network route từ runner đến app origin và
+customer gateway. Không skip smoke test khi app private. Preflight dừng trước
+khi đổi image nếu runner không truy cập được origin.
 
-The backend is deployed and verified before the frontend. Verification checks
-the exact revision image, provisioning, health and the latest ready revision.
-For public ingress, smoke tests call backend `/health` and database `/ready`,
-then frontend `/` and `/env.js`, including the expected runtime `API_BASE` value.
-Private ingress skips public probes and relies
-on revision readiness; configure appropriate readiness probes on those apps.
-Failures report revision diagnostics without automatically rolling back.
-If the frontend fails after the backend succeeds, the backend remains updated;
-inspect the deployment summary before deciding how to recover. The AKS rollback
-workflow does not roll back Container Apps. Use `Rollback Container Apps` for
-this deployment path.
+Apps dùng Single revision mode; backend port 8000, frontend port 8080. Cấu hình
+ACR pull identity/credential phải sẵn có. Với `API_BASE=/api`, gateway phải route
+`/api` đến backend. Nếu dùng URL backend trực tiếp, cấu hình CORS phù hợp trên app.
 
-### Roll back Azure Container Apps
+## Identity và bảo vệ GitHub
 
-1. Open a previous successful `Deploy Container Apps` run and find its Build
-   Release run ID in the summary. Choose a release you have verified worked.
-2. In GitHub **Actions**, select **Rollback Container Apps** -> **Run workflow**
-   on `master`. Enter that `release_run_id` and a nonempty `reason` (include your
-   incident/change ticket when applicable).
-3. Approve the `production` environment if required reviewers are configured.
-4. Check the rollback summary for success, both restored digests and the new
-   `rb<run-id>-<attempt>` revisions.
+Build identity cần federated subject
+`repo:ThanhMiracle/docker:ref:refs/heads/main` và quyền push chỉ trong ACR.
+Deployment identity cần subject
+`repo:ThanhMiracle/docker:environment:production` và quyền update hai Container
+Apps. Container Apps phải có quyền pull ACR. Cấu hình identity/RBAC này được thực
+hiện riêng, không nằm trong pipeline provisioning.
 
-The rollback verifies that the selected run is a successful `Build Release`
-push on `master` in this repository, checks its evidence checksum and matches
-the manifest to the run's commit and attempt. It restores the API and frontend
-images by immutable digest without rebuilding them. The release evidence must
-still exist (currently retained for 90 days), and ACR must retain the images.
+Chạy từ repository bằng GitHub CLI có quyền admin:
 
-Both apps are checked before either is changed. The backend is restored and
-verified first, followed by the frontend, using the same health verification
-as deployment. Private apps rely on Azure revision readiness; public apps also
-run HTTP smoke tests. Current environment variables, secrets, managed identities,
-ingress and frontend `API_BASE` are preserved. This is an image rollback:
-database/schema changes, data and earlier app configuration are not restored.
-Ensure the selected images work with the current schema and settings.
+```powershell
+./scripts/configure-github-cicd.ps1 -ProductionReviewer ThanhMiracle
+```
 
-Deployment and rollback share a concurrency group, so they cannot update the
-apps simultaneously. Rollback is manual; a later successful Build Release still
-triggers the normal deployment workflow. Pause new releases while investigating
-an incident if you need the restored version to remain deployed.
+Script tạo Environment `production`, required reviewer, hạn chế deployment từ
+`main`, đặt target Container Apps và bảo vệ `main` với PR, required `Quality Gate`,
+conversation resolution, chặn force push/deletion và admin bypass.
 
-The two app updates are sequential. If the frontend fails after the backend
-passes, the backend stays restored; inspect the summary and diagnostics before
-retrying or selecting another release. No additional rollback is triggered on
-failure. The existing OIDC identity and Container Apps variables are reused;
-no new Azure secrets are required.
+Repository cá nhân mặc định `PullRequestApprovals=0`: vẫn mở PR và chờ `Quality Gate`
+thành công, nhưng có thể tự merge mà không cần người khác approve. Script cập nhật
+cả review rule trong ruleset đang áp dụng cho `main` và classic branch protection;
+tắt yêu cầu approve lần push mới nhất cùng các review bắt buộc khác khi số approval
+bằng 0. Chỉ đặt số approval về 0 trong Settings là chưa đủ nếu vẫn bật
+`Require approval of the most recent reviewable push`.
 
-See the [Azure CLI update reference](https://learn.microsoft.com/en-us/cli/azure/containerapp#az-containerapp-update)
-and [Container Apps revision behavior](https://learn.microsoft.com/en-us/azure/container-apps/revisions).
+Khi có collaborator, truyền `-PullRequestApprovals 1` để yêu cầu một người khác
+review và approve lần push mới nhất. GitHub không cho tác giả tự approve PR.
+Production reviewer ban đầu được phép duyệt deployment do chính
+mình khởi tạo; có thể chọn reviewer khác và bật prevent self-review trong Settings.
 
-## 5. Failure và rollback
+## Rollback và failure
 
-Nếu verification thất bại, không chạy lại release và không build image mới.
-Người vận hành xem diagnostics rồi quyết định:
+Mở workflow `Rollback Container Apps` trên `main`, nhập Build Release run ID của
+bản ổn định và lý do. Reviewer phê duyệt tại `production`. Workflow xác minh release
+và khôi phục backend/frontend bằng digest, không rebuild, rồi chạy lại cùng health
+checks và customer smoke test.
 
-- recovery hoặc roll-forward;
-- pause để điều tra;
-- chạy `Rollback Production`.
+Deploy và rollback dùng chung concurrency group. Khi lỗi, workflow dừng, lưu summary
+và revision diagnostics để người vận hành quyết định rollback, recovery hoặc
+roll-forward. Nếu backend đã đổi nhưng frontend lỗi, backend vẫn ở phiên bản vừa
+đổi; không có rollback ngầm. Rollback image không khôi phục database/schema hoặc
+cấu hình app cũ. Kiểm tra tương thích trước khi chọn release để restore.
 
-Rollback cần:
+Release evidence và image ACR cần còn tồn tại. Tạm dừng merge/release mới trong lúc
+xử lý incident để deployment tiếp theo không thay đổi phiên bản vừa restore.
 
-- Jira change/incident cho quyết định rollback;
-- Helm revision đích;
-- Build Release run ID của artifact cần khôi phục;
-- lý do quyết định.
+## Cập nhật dependency và kiểm tra cục bộ
 
-Workflow xác minh manifest của Helm revision chứa đúng ba digest từ release
-evidence trước khi rollback, sau đó chạy lại toàn bộ rollout, readiness, endpoint,
-smoke và digest verification.
+Frontend dùng `npm ci` với `frontend/package-lock.json`; chạy `npm install` và
+commit lockfile khi cập nhật dependency. Build production dùng Vite production mode.
 
-## 6. Lưu ý về secret đã từng commit
+Backend runtime cài dependency đã khóa version/hash từ `requirements.lock.txt`.
+JWT dùng PyJWT thay cho python-jose và giữ định dạng HS256; bộ test kiểm tra
+tương thích token cũ, thời hạn, chữ ký và giới hạn thuật toán.
+Sau khi sửa `backend/requirements.txt`, tạo lại lockfile bằng:
 
-File production `.env` phải nằm ngoài Git. Nếu credential đã từng xuất hiện
-trong lịch sử repository, hãy rotate/revoke credential trước, sau đó purge lịch
-sử bằng quy trình được tổ chức phê duyệt. Xóa file ở commit mới không làm secret
-biến mất khỏi các commit cũ.
+```text
+uv pip compile backend/requirements.txt --python-version 3.13 --python-platform x86_64-manylinux_2_28 --generate-hashes --output-file backend/requirements.lock.txt --no-header
+```
+
+Deployment tests: `python -m unittest discover -s scripts/tests -v` với PyYAML,
+Git Bash và jq trên PATH. Trên Windows, đặt `BASH_EXE` đến Git Bash. Backend tests
+mặc định dùng SQLite cục bộ; CI đặt `TEST_DATABASE_URL` đến PostgreSQL service
+dùng riêng cho test. Không dùng thông tin kết nối production cho kiểm thử.

@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional
 from cryptography.fernet import Fernet, InvalidToken
-from jose import jwt
+import jwt
 from passlib.context import CryptContext
 SECRET_KEY = os.getenv("JWT_SECRET", "dev-secret-key-change-me")
 ALGORITHM = "HS256"

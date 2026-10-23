@@ -299,11 +299,11 @@ controls automatic cleanup. Copy these archives to durable off-host storage.
 ## GitHub Actions CI/CD for Azure
 
 Production delivery uses separate PR validation, immutable ACR release,
-approved AKS deployment, and controlled rollback workflows. Azure access uses
+approved Azure Container Apps deployment, and controlled rollback workflows on `main`. Azure access uses
 GitHub OIDC; no long-lived Azure client secret or kubeconfig is required.
 
 See [CI/CD setup and operations](docs/cicd.md) for the required GitHub
-Environment, repository variables, Azure roles, approval flow, and rollback
+Environment, GitHub Actions secrets, Azure roles, approval flow, and rollback
 procedure.
 
 For Azure Container Apps, run **Rollback Container Apps** in GitHub Actions

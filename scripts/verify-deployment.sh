@@ -28,11 +28,12 @@ verify_workload() {
     echo "No running image ID found for ${workload}" >&2
     exit 1
   }
-  grep --fixed-strings --quiet "$expected_digest" <<<"$image_ids" || {
-    echo "${workload} is not running approved digest ${expected_digest}" >&2
-    printf '%s\n' "$image_ids" >&2
-    exit 1
-  }
+  while IFS= read -r image_id; do
+    [[ "$image_id" == *@"$expected_digest" || "$image_id" == *://"$expected_digest" || "$image_id" == "$expected_digest" ]] || {
+      echo "${workload} has an unapproved running image: $image_id" >&2
+      exit 1
+    }
+  done <<< "$image_ids"
 }
 
 validate_digest "$api_digest"
