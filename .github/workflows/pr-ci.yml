@@ -30,6 +30,7 @@ jobs:
   backend-test:
     name: Backend tests and coverage with PostgreSQL
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16-alpine
@@ -62,6 +63,7 @@ jobs:
             -e DATABASE_URL="$TEST_DATABASE_URL" \
             -e TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             -e JWT_SECRET="$(openssl rand -hex 32)" \
+            -e COVERAGE_FILE=/reports/.coverage \
             -e ADMIN_EMAIL=alice@example.com \
             -v "$PWD/reports/backend:/reports" \
             platform-api-test:${{ github.sha }} \
