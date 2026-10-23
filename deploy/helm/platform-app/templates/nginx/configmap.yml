@@ -5,4 +5,4 @@ metadata:
 
 data:
   nginx.conf: |
-{{ .Files.Get "files/nginx.conf" | indent 4 }}
+{{ tpl (.Files.Get "files/nginx.conf") . | indent 4 }}

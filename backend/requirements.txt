@@ -4,7 +4,7 @@ sqlalchemy
 psycopg[binary] 
 python-multipart
 passlib[argon2]
-python-jose[cryptography]
+PyJWT[crypto]>=2.15.1,<3
 cryptography
 pydantic
 email-validator
@@ -12,7 +12,6 @@ azure-storage-blob
 azure-identity
 boto3
 httpx
-pytest
 
 # Security constraints
 msgpack>=1.2.1

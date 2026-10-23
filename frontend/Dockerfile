@@ -1,10 +1,10 @@
 # ---------- Stage 1: build frontend ----------
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 
 COPY . .
 

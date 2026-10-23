@@ -1,0 +1,4 @@
+# The hashed backend lockfile is authoritative for application dependencies.
+scan:
+  file-patterns:
+    - 'pip:requirements.lock.txt'

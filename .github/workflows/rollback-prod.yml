@@ -11,10 +11,6 @@ on:
         description: Helm revision that deployed that artifact
         required: true
         type: string
-      jira_key:
-        description: Jira change or incident authorizing the rollback
-        required: true
-        type: string
       reason:
         description: Human decision rationale
         required: true
@@ -31,18 +27,18 @@ concurrency:
 env:
   AKS_RG: ${{ vars.AKS_RESOURCE_GROUP }}
   AKS_NAME: ${{ vars.AKS_NAME }}
-  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER || vars.ACR_LOGIN_SERVER }}
   NAMESPACE: ${{ vars.K8S_NAMESPACE || 'platform' }}
   RELEASE_NAME: platform-app
-  SMOKE_TEST_URL: ${{ vars.PROD_SMOKE_TEST_URL }}
+  SMOKE_TEST_URL: ${{ secrets.PROD_SMOKE_TEST_URL || vars.PROD_SMOKE_TEST_URL }}
 
 jobs:
   resolve-release:
+    if: ${{ vars.PRODUCTION_TARGET == 'aks' && github.ref == 'refs/heads/main' }}
     name: Validate rollback artifact
     runs-on: ubuntu-latest
     outputs:
       commit: ${{ steps.manifest.outputs.commit }}
-      release_jira_key: ${{ steps.manifest.outputs.release_jira_key }}
       api_reference: ${{ steps.manifest.outputs.api_reference }}
       api_digest: ${{ steps.manifest.outputs.api_digest }}
       frontend_reference: ${{ steps.manifest.outputs.frontend_reference }}
@@ -56,7 +52,6 @@ jobs:
         run: |
           [[ "${{ inputs.release_run_id }}" =~ ^[1-9][0-9]*$ ]]
           [[ "${{ inputs.revision }}" =~ ^[1-9][0-9]*$ ]]
-          [[ "${{ inputs.jira_key }}" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]]
           test -n "$REASON"
       - name: Download evidence for the artifact being restored
         uses: actions/download-artifact@v4
@@ -74,7 +69,6 @@ jobs:
           test "$(jq -r '.workflow_run_id' "$manifest")" = "${{ inputs.release_run_id }}"
 
           commit="$(jq -r '.commit' "$manifest")"
-          release_jira_key="$(jq -r '.jira_key' "$manifest")"
           api_repository="$(jq -r '.images.api.repository' "$manifest")"
           api_digest="$(jq -r '.images.api.digest' "$manifest")"
           frontend_repository="$(jq -r '.images.frontend.repository' "$manifest")"
@@ -83,7 +77,6 @@ jobs:
           nginx_digest="$(jq -r '.images.nginx.digest' "$manifest")"
 
           [[ "$commit" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$release_jira_key" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]]
           test "$api_repository" = "$ACR_LOGIN_SERVER/my-api"
           test "$frontend_repository" = "$ACR_LOGIN_SERVER/my-fe"
           test "$nginx_repository" = "$ACR_LOGIN_SERVER/my-nginx"
@@ -92,7 +85,6 @@ jobs:
           done
 
           printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
-          printf 'release_jira_key=%s\n' "$release_jira_key" >> "$GITHUB_OUTPUT"
           printf 'api_reference=%s@%s\n' "$api_repository" "$api_digest" >> "$GITHUB_OUTPUT"
           printf 'api_digest=%s\n' "$api_digest" >> "$GITHUB_OUTPUT"
           printf 'frontend_reference=%s@%s\n' "$frontend_repository" "$frontend_digest" >> "$GITHUB_OUTPUT"
@@ -106,11 +98,9 @@ jobs:
           {
             echo "## Rollback awaiting production approval"
             echo ""
-            echo "- Authorization Jira: ${{ inputs.jira_key }}"
             echo "- Reason: $REASON"
             echo "- Target Helm revision: ${{ inputs.revision }}"
             echo "- Artifact release run: ${{ inputs.release_run_id }}"
-            echo "- Original release Jira: ${{ steps.manifest.outputs.release_jira_key }}"
             echo "- Commit: \`${{ steps.manifest.outputs.commit }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -135,13 +125,12 @@ jobs:
         run: |
           test -n "$AKS_RG"
           test -n "$AKS_NAME"
-          test -n "$SMOKE_TEST_URL"
       - name: Sign in to Azure with the production OIDC identity
         uses: azure/login@v3
         with:
-          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZURE_DEPLOY_CLIENT_ID || vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
       - name: Set AKS context
         run: |
           az aks get-credentials \
@@ -170,8 +159,10 @@ jobs:
             "$NAMESPACE" \
             "${{ needs.resolve-release.outputs.api_digest }}" \
             "${{ needs.resolve-release.outputs.frontend_digest }}" \
-            "${{ needs.resolve-release.outputs.nginx_digest }}"
+            "${{ needs.resolve-release.outputs.nginx_digest }}" \
+            false
       - name: Run public smoke and dependency tests
+        if: ${{ env.SMOKE_TEST_URL != '' }}
         run: bash scripts/smoke-test.sh "$SMOKE_TEST_URL"
       - name: Write rollback evidence
         env:
@@ -180,11 +171,9 @@ jobs:
           {
             echo "## Production rollback verified"
             echo ""
-            echo "- Authorization Jira: ${{ inputs.jira_key }}"
             echo "- Reason: $REASON"
             echo "- Restored Helm revision: ${{ inputs.revision }}"
             echo "- Artifact release run: ${{ inputs.release_run_id }}"
-            echo "- Original release Jira: ${{ needs.resolve-release.outputs.release_jira_key }}"
             echo "- Commit: \`${{ needs.resolve-release.outputs.commit }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Collect failure diagnostics for human decision

@@ -6,7 +6,7 @@ check_app() {
   local app="$1" container="$2" port="$3" output="$4"
   local app_json environment_id environment_json
   local ingress_external environment_internal public_network_access
-  local fqdn url=""
+  local fqdn url
 
   app_json="$(az containerapp show \
     --name "$app" --resource-group "$RESOURCE_GROUP" \
@@ -46,18 +46,18 @@ check_app() {
   # App origins can be private; browser traffic uses the public gateway.
   printf '%s_origin=https://%s\n' "$output" "$fqdn" >> "$GITHUB_OUTPUT"
 
-  if [[ "$environment_internal" == "true" ]]; then
-    echo "::notice::$app is in an internal Container Apps environment; skipping public HTTP smoke tests."
-  elif [[ "$public_network_access" == "Disabled" ]]; then
-    echo "::notice::$app has public network access disabled; skipping public HTTP smoke tests."
-  elif [[ "$ingress_external" != "true" ]]; then
-    echo "::notice::$app uses app-internal ingress; skipping public HTTP smoke tests."
-  else
-    url="https://$fqdn"
-    echo "Public smoke test is enabled for $app: $url"
+  url="https://$fqdn"
+  if [[ "$environment_internal" == "true" || "$public_network_access" == "Disabled" || "$ingress_external" != "true" ]]; then
+    echo "::notice::$app is private. The deployment runner must have network and DNS access to its origin."
   fi
+  # Any HTTP response proves reachability, including an unhealthy old revision.
+  # Do not require the old application to be healthy before allowing rollback.
+  curl --silent --show-error --connect-timeout 10 --max-time 30 \
+    --output /dev/null "$url/" || {
+    echo "::error::Cannot reach $app before deployment. Configure DEPLOY_RUNNER_LABELS for a runner on the application's private network."
+    exit 1
+  }
 
-  # Empty URL signals that only Azure revision readiness is tested.
   printf '%s_url=%s\n' "$output" "$url" >> "$GITHUB_OUTPUT"
 }
 

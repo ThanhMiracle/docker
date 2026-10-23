@@ -15,10 +15,11 @@ from app.main import app
 from app.database import Base, get_db
 
 # SQLite in-memory dùng chung 1 connection cho toàn bộ test session
+test_database_url = os.getenv("TEST_DATABASE_URL", "sqlite://")
 engine = create_engine(
-    "sqlite://",  # chú ý: không dùng sqlite:///:memory:
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,  # giữ nguyên 1 connection => không mất bảng
+    test_database_url,
+    **({"connect_args": {"check_same_thread": False}, "poolclass": StaticPool}
+       if test_database_url.startswith("sqlite:") else {"pool_pre_ping": True}),
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

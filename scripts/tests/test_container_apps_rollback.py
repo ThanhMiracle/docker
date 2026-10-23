@@ -25,18 +25,30 @@ def emit(value):
     os.write(1, (json.dumps(value) if not isinstance(value, str) else value).encode())
 if tool == 'gh':
     run = dict(path='.github/workflows/release.yml', status='completed', conclusion='success',
-               event='push', head_branch='master', head_sha='b'*40, run_attempt=1,
+               event='push', head_branch='main', head_sha='b'*40, run_attempt=1,
                head_repository=dict(full_name='test/repo'))
     if os.environ.get('CASE') == 'failed_release': run['conclusion'] = 'failure'
     if os.environ.get('CASE') == 'wrong_workflow': run['path'] = '.github/workflows/pr-ci.yml'
     emit(run)
 elif tool == 'curl':
+    if os.environ.get('CASE') == 'unreachable': sys.exit(7)
+    if os.environ.get('CASE') == 'frontend_failure' and args[-1].startswith('https://fe.'):
+        sys.exit(22)
     if '--output' in args:
         output = args[args.index('--output') + 1]
         if 'frontend-env.js' in output:
             # Git Bash passes POSIX temp paths; use a known Windows path in mocks.
             Path(os.environ['MOCK_TEMP'], 'frontend-env.js').write_text('window.__ENV__={"API_BASE":"/api"};')
     with open(os.environ['MOCK_LOG'], 'a') as log: log.write(json.dumps(['curl'] + args) + '\n')
+    if '--output' not in args:
+        if os.environ.get('CASE') == 'html_response':
+            emit('<html>SPA fallback</html>')
+        elif '/ready' in args[-1]:
+            emit(dict(status='ready'))
+        elif '/health' in args[-1]:
+            emit(dict(status='ok'))
+        else:
+            emit(dict(items=[], total=0))
 elif tool == 'az':
     def flag(name): return args[args.index(name) + 1]
     if args[:2] == ['extension', 'add']: sys.exit(0)
@@ -97,7 +109,7 @@ class RollbackTests(unittest.TestCase):
             BACKEND_CONTAINER='backend', FRONTEND_CONTAINER='frontend', ACR_LOGIN_SERVER='registry.azurecr.io',
             BACKEND_IMAGE='registry.azurecr.io/my-api@'+DIGEST,
             FRONTEND_IMAGE='registry.azurecr.io/my-fe@'+DIGEST,
-            FRONTEND_API_BASE='/api', BACKEND_URL='', FRONTEND_URL='',
+            FRONTEND_API_BASE='/api', BACKEND_URL='https://be.example.com', FRONTEND_URL='https://fe.example.com',
             GITHUB_RUN_ID='99', GITHUB_RUN_ATTEMPT='1', GITHUB_OUTPUT=bash_path(self.output),
             GITHUB_REPOSITORY='test/repo', RELEASE_RUN_ID='123', ROLLBACK_REASON='incident test',
             BUILD_COMMIT='b'*40, BUILD_RUN_ID='123', BUILD_RUN_ATTEMPT='1',
@@ -122,10 +134,13 @@ class RollbackTests(unittest.TestCase):
     def commands(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
 
+    def updates(self):
+        return [cmd for cmd in self.commands() if cmd[:2] == ['containerapp', 'update']]
+
     def test_restores_exact_images_backend_first_without_changing_environment(self):
         result = self.script('deploy-container-apps.sh')
         self.assertEqual(result.returncode, 0, result.stderr)
-        commands = self.commands()
+        commands = self.updates()
         self.assertEqual([cmd[cmd.index('--name')+1] for cmd in commands], ['be', 'fe'])
         self.assertEqual([cmd[cmd.index('--image')+1] for cmd in commands],
                          [self.env['BACKEND_IMAGE'], self.env['FRONTEND_IMAGE']])
@@ -136,7 +151,7 @@ class RollbackTests(unittest.TestCase):
         self.env['CASE'] = 'backend_failure'
         result = self.script('deploy-container-apps.sh')
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(len(self.commands()), 1)
+        self.assertEqual(len(self.updates()), 1)
         self.assertIn('failed to become healthy', result.stderr + result.stdout)
 
     def test_normal_deployment_still_sets_frontend_route(self):
@@ -144,17 +159,19 @@ class RollbackTests(unittest.TestCase):
         self.env.pop('REVISION_PREFIX')
         result = self.script('deploy-container-apps.sh')
         self.assertEqual(result.returncode, 0, result.stderr)
-        commands = self.commands()
+        commands = self.updates()
         self.assertNotIn('--set-env-vars', commands[0])
         self.assertIn('API_BASE=/api', commands[1])
         self.assertIn('frontend_revision=fe--gh99-1', self.output.read_text())
 
-    def test_preflight_preserves_frontend_route_and_skips_private_http(self):
+    def test_preflight_preserves_frontend_route_and_checks_private_http(self):
         result = self.script('check-container-apps.sh')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('frontend_api_base=/api', self.output.read_text())
-        self.assertIn('backend_url=\n', self.output.read_text())
-        self.assertEqual(self.commands(), [])
+        self.assertIn('backend_url=https://be.example.com\n', self.output.read_text())
+        self.assertEqual([cmd[-1] for cmd in self.commands()],
+                         ['https://be.example.com/', 'https://fe.example.com/'])
+        self.assertEqual(self.updates(), [])
 
     def test_public_apps_get_http_checks(self):
         self.env.update(CASE='public', BACKEND_URL='https://be.example.com', FRONTEND_URL='https://fe.example.com')
@@ -162,7 +179,36 @@ class RollbackTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         urls = [cmd[-1] for cmd in self.commands() if cmd[0] == 'curl']
         self.assertEqual(urls, ['https://be.example.com/health', 'https://be.example.com/ready',
+                               'https://be.example.com/products/?limit=1',
                                'https://fe.example.com/', 'https://fe.example.com/env.js?deployment=rb99-1'])
+
+    def test_unreachable_private_origins_stop_before_any_update(self):
+        self.env['CASE'] = 'unreachable'
+        result = self.script('check-container-apps.sh')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('DEPLOY_RUNNER_LABELS', result.stdout)
+        self.assertEqual(self.updates(), [])
+
+    def test_missing_http_origin_is_not_reported_as_verified(self):
+        self.env['BACKEND_URL'] = ''
+        result = self.script('deploy-container-apps.sh')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.updates(), [])
+
+    def test_frontend_failure_reports_partial_operation_without_hidden_rollback(self):
+        self.env['CASE'] = 'frontend_failure'
+        result = self.script('deploy-container-apps.sh')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.updates()), 2)
+        self.assertEqual([cmd[cmd.index('--revision-suffix') + 1] for cmd in self.updates()],
+                         ['rb99-1', 'rb99-1'])
+
+    def test_customer_smoke_rejects_html_fallback_with_http_200(self):
+        result = self.run_bash(f'bash "{bash_path(ROOT / "scripts/smoke-test.sh")}" https://shop.example.com')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.env['CASE'] = 'html_response'
+        result = self.run_bash(f'bash "{bash_path(ROOT / "scripts/smoke-test.sh")}" https://shop.example.com')
+        self.assertNotEqual(result.returncode, 0)
 
     def test_rejects_failed_or_wrong_workflow_and_unsafe_input(self):
         for case in ('failed_release', 'wrong_workflow'):

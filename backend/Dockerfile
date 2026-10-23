@@ -22,7 +22,7 @@ RUN python -m venv "$VENV_PATH"
 
 ENV PATH="$VENV_PATH/bin:$PATH"
 
-COPY requirements.txt .
+COPY requirements.txt requirements.lock.txt ./
 
 # Upgrade Python packaging tools to patched versions
 RUN pip install --no-cache-dir --upgrade \
@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir --upgrade \
         "setuptools>=78.1.1" \
     && pip install --no-cache-dir \
         --prefer-binary \
-        -r requirements.txt
+        --require-hashes -r requirements.lock.txt
 
 COPY app ./app
 
@@ -68,6 +68,10 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--worker
 ########################
 
 FROM runtime AS test
+
+USER root
+RUN pip install --no-cache-dir pytest==9.1.1 pytest-cov==7.0.0
+USER appuser
 
 COPY --chown=appuser:appuser tests ./tests
 

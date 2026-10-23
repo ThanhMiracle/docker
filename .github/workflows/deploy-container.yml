@@ -1,11 +1,11 @@
 name: Deploy Container Apps
 
-# Run only after Build Release completes on master.
+# Run only after Build Release completes on main.
 on:
   workflow_run:
     workflows: ["Build Release"]
     types: [completed]
-    branches: [master]
+    branches: [main]
 
 permissions:
   contents: read
@@ -19,11 +19,12 @@ jobs:
   deploy:
     name: Deploy backend and frontend
     if: >-
+      vars.PRODUCTION_TARGET != 'aks' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'master' &&
+      github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.DEPLOY_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 40
     environment: production
 
@@ -42,7 +43,8 @@ jobs:
       FRONTEND_APP: ${{ vars.FRONTEND_CONTAINER_APP || 'myapp-prod-fe' }}
       BACKEND_CONTAINER: ${{ vars.BACKEND_CONTAINER_NAME || 'backend' }}
       FRONTEND_CONTAINER: ${{ vars.FRONTEND_CONTAINER_NAME || 'frontend' }}
-      ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+      PROD_SMOKE_TEST_URL: ${{ secrets.PROD_SMOKE_TEST_URL || vars.PROD_SMOKE_TEST_URL }}
+      ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER || vars.ACR_LOGIN_SERVER }}
       BUILD_COMMIT: ${{ github.event.workflow_run.head_sha }}
       BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
       BUILD_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
@@ -50,6 +52,21 @@ jobs:
     steps:
       - name: Checkout pipeline scripts
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Validate deployment prerequisites
+        env:
+          AZURE_DEPLOY_CLIENT_ID: ${{ secrets.AZURE_DEPLOY_CLIENT_ID || vars.AZURE_DEPLOY_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          for name in ACR_LOGIN_SERVER AZURE_DEPLOY_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID PROD_SMOKE_TEST_URL; do
+            test -n "${!name}" || { echo "::error::Missing GitHub Actions secret or variable: $name"; exit 1; }
+          done
+          for command in az jq curl gh; do command -v "$command" > /dev/null; done
 
       - name: Download release evidence from successful build
         uses: actions/download-artifact@v4
@@ -101,9 +118,9 @@ jobs:
       - name: Log in to Azure with deployment OIDC identity
         uses: azure/login@v3
         with:
-          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZURE_DEPLOY_CLIENT_ID || vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Check Container Apps, ACR configuration, and network accessibility
         id: apps
@@ -118,6 +135,17 @@ jobs:
           FRONTEND_URL: ${{ steps.apps.outputs.frontend_url }}
           FRONTEND_API_BASE: ${{ vars.CONTAINER_APPS_API_BASE || '/api' }}
         run: bash scripts/deploy-container-apps.sh
+
+      - name: Verify application through its customer-facing route
+        env:
+          API_BASE: ${{ vars.CONTAINER_APPS_API_BASE || '/api' }}
+        run: |
+          case "$API_BASE" in
+            http://*|https://*) api_url="$API_BASE" ;;
+            /*) api_url="${PROD_SMOKE_TEST_URL%/}$API_BASE" ;;
+            *) echo "::error::API_BASE must be an absolute URL or root-relative path"; exit 1 ;;
+          esac
+          bash scripts/smoke-test.sh "$PROD_SMOKE_TEST_URL" "$api_url"
 
       - name: Collect revision diagnostics on failure
         if: failure()
@@ -148,4 +176,15 @@ jobs:
             echo "- Backend image: $BACKEND_IMAGE"
             echo "- Frontend: $FRONTEND_APP / $FRONTEND_REVISION"
             echo "- Frontend image: $FRONTEND_IMAGE"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/container-apps-summary.md"
+
+      - name: Preserve deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-apps-operation-evidence
+          path: |
+            release/
+            ${{ runner.temp }}/container-apps-summary.md
+          if-no-files-found: warn
+          retention-days: 90

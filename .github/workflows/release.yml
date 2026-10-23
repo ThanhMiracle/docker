@@ -2,19 +2,19 @@ name: Build Release
 
 on:
   push:
-    branches: [master]
+    branches: [main]
 
 # Default workflow permissions stay minimal.
 permissions:
   contents: read
 
 concurrency:
-  group: release-master
+  group: release-main
   cancel-in-progress: false
 
 env:
-  ACR_NAME: ${{ vars.ACR_NAME }}
-  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+  ACR_NAME: ${{ secrets.ACR_NAME || vars.ACR_NAME }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER || vars.ACR_LOGIN_SERVER }}
   API_IMAGE_NAME: my-api
   FRONTEND_IMAGE_NAME: my-fe
   NGINX_IMAGE_NAME: my-nginx
@@ -27,148 +27,47 @@ jobs:
   # 1. Validate source and run quality gates
   # ============================================================
   quality-gate:
-    name: Validate merged source
-    runs-on: ubuntu-latest
+    name: Application validation
+    uses: ./.github/workflows/pr-ci.yml
 
+  validate-source:
+    name: Require a merged Pull Request
+    needs: quality-gate
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
-
     outputs:
-      jira_key: ${{ steps.trace.outputs.jira_key }}
       pr_number: ${{ steps.trace.outputs.pr_number }}
-
     steps:
-      - name: Checkout exact release commit
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      # Require the commit pushed to master to be associated with a PR that was
-      # merged into master. Approval is intentionally NOT required here.
-      - name: Set optional release trace metadata
+      - name: Bind release commit to its merged PR
         id: trace
-        run: |
-          echo "Release triggered from push to master."
-          printf 'jira_key=\n' >> "$GITHUB_OUTPUT"
-          printf 'pr_number=\n' >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build backend test image
-        uses: docker/build-push-action@v7
-        with:
-          context: ./backend
-          target: test
-          load: true
-          push: false
-          tags: platform-api-test:${{ github.sha }}
-
-      - name: Run backend tests
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          docker run --rm \
-            -e DATABASE_URL=sqlite:////tmp/platform-app-test.db \
-            -e ADMIN_EMAIL=alice@example.com \
-            platform-api-test:${{ github.sha }}
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package.json
-
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          set -euo pipefail
-          npm install --no-audit --no-fund
-          npm test
-          npm run build
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Run backend SAST
-        run: |
-          set -euo pipefail
-          python -m pip install --disable-pip-version-check bandit==1.8.6
-          bandit --recursive backend/app --severity-level medium --confidence-level medium
-
-      - name: Scan source, dependencies, secrets, and IaC
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,misconfig,secret
-          # Helm output is rendered and validated separately below.
-          skip-dirs: deploy/helm/platform-app
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v4.3.0
-
-      - name: Render production manifests
-        run: |
-          set -euo pipefail
-
-          digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-          # Keep this configuration aligned with Deploy Production.
-          helm lint ./deploy/helm/platform-app \
-            --set-string api.image.digest="$digest" \
-            --set-string frontend.image.digest="$digest" \
-            --set-string nginx.image.digest="$digest" \
-            --set minio.enabled=false \
-            --set keyVault.enabled=false
-
-          helm template platform-app ./deploy/helm/platform-app \
-            --namespace platform \
-            --set-string api.image.digest="$digest" \
-            --set-string frontend.image.digest="$digest" \
-            --set-string nginx.image.digest="$digest" \
-            --set minio.enabled=false \
-            --set keyVault.enabled=false \
-            > rendered-manifests.yaml
-
-      - name: Install verified Conftest
-        run: |
-          set -euo pipefail
-
-          archive="$RUNNER_TEMP/conftest.tar.gz"
-
-          curl --fail --location --silent --show-error \
-            --output "$archive" \
-            https://github.com/open-policy-agent/conftest/releases/download/v0.59.0/conftest_0.59.0_Linux_x86_64.tar.gz
-
-          echo "af879740a9b43aae21f928ed5d3571615c9d17b5d0551623a56d317812db0f98  $archive" \
-            | sha256sum --check
-
-          tar --extract --gzip --file "$archive" --directory /usr/local/bin conftest
-
-      - name: Enforce immutable-image policy
-        run: conftest test --policy policy rendered-manifests.yaml
+          prs="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls")"
+          pr="$(jq -er --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '
+            [.[] | select(.merged_at != null and .base.ref == "main"
+              and .base.repo.full_name == $repo and .merge_commit_sha == $sha)]
+            | first | .number // empty' <<< "$prs")" || {
+            echo "::error::Release requires a PR merged into main."
+            exit 1
+          }
+          printf 'pr_number=%s\n' "$pr" >> "$GITHUB_OUTPUT"
 
   # ============================================================
   # 2. Build, validate, scan, and publish release artifacts
   # ============================================================
   build-release:
     name: Build, scan, and publish immutable artifacts
-    needs: quality-gate
+    needs: [quality-gate, validate-source]
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
       id-token: write
+      attestations: write
 
     steps:
       - name: Checkout exact release commit
@@ -184,9 +83,9 @@ jobs:
       - name: Sign in to Azure with the build OIDC identity
         uses: azure/login@v3
         with:
-          client-id: ${{ vars.AZURE_BUILD_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZURE_BUILD_CLIENT_ID || vars.AZURE_BUILD_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign in to Azure Container Registry
         run: az acr login --name "$ACR_NAME"
@@ -198,17 +97,23 @@ jobs:
           # Dockerfile's final stage is test; production must use runtime.
           docker build \
             --file backend/Dockerfile \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --target runtime \
             --tag "$ACR_LOGIN_SERVER/$API_IMAGE_NAME:$RELEASE_TAG" \
             backend
 
           docker build \
             --file frontend/Dockerfile \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --tag "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME:$RELEASE_TAG" \
             frontend
 
           docker build \
             --file nginx/Dockerfile \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --tag "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME:$RELEASE_TAG" \
             nginx
 
@@ -224,30 +129,49 @@ jobs:
             -c "import fastapi, sqlalchemy, psycopg; print('API runtime dependencies OK')"
 
       - name: Scan API release image
-        uses: aquasecurity/trivy-action@v0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:${{ env.RELEASE_TAG }}
+          format: json
+          output: api-image-security.json
           severity: HIGH,CRITICAL
-          exit-code: "0"
-          ignore-unfixed: true
+          exit-code: "1"
+          ignore-unfixed: false
 
       - name: Scan frontend release image
-        uses: aquasecurity/trivy-action@v0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ env.RELEASE_TAG }}
+          format: json
+          output: frontend-image-security.json
           severity: HIGH,CRITICAL
-          exit-code: "0"
-          ignore-unfixed: true
+          exit-code: "1"
+          ignore-unfixed: false
           skip-setup-trivy: true
 
       - name: Scan Nginx release image
-        uses: aquasecurity/trivy-action@v0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.NGINX_IMAGE_NAME }}:${{ env.RELEASE_TAG }}
+          format: json
+          output: nginx-image-security.json
           severity: HIGH,CRITICAL
-          exit-code: "0"
-          ignore-unfixed: true
+          exit-code: "1"
+          ignore-unfixed: false
           skip-setup-trivy: true
+
+      - name: Generate SBOMs from the scanned images
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          for image in "$API_IMAGE_NAME" "$FRONTEND_IMAGE_NAME" "$NGINX_IMAGE_NAME"; do
+            trivy image --scanners secret --exit-code 1 --format json \
+              --output "$image-image-secrets.json" "$ACR_LOGIN_SERVER/$image:$RELEASE_TAG"
+          done
+          trivy image --format cyclonedx --output release/api.sbom.cdx.json "$ACR_LOGIN_SERVER/$API_IMAGE_NAME:$RELEASE_TAG"
+          trivy image --format cyclonedx --output release/frontend.sbom.cdx.json "$ACR_LOGIN_SERVER/$FRONTEND_IMAGE_NAME:$RELEASE_TAG"
+          trivy image --format cyclonedx --output release/nginx.sbom.cdx.json "$ACR_LOGIN_SERVER/$NGINX_IMAGE_NAME:$RELEASE_TAG"
+          cp *-image-security.json *-image-secrets.json release/
 
       - name: Push images after all quality gates pass
         run: |
@@ -294,10 +218,43 @@ jobs:
           printf 'frontend_digest=%s\n' "$frontend_digest" >> "$GITHUB_OUTPUT"
           printf 'nginx_digest=%s\n' "$nginx_digest" >> "$GITHUB_OUTPUT"
 
+      - name: Attest api build provenance
+        id: attest-api
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}
+          subject-digest: ${{ steps.digests.outputs.api_digest }}
+          push-to-registry: true
+
+      - name: Attest frontend build provenance
+        id: attest-frontend
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_IMAGE_NAME }}
+          subject-digest: ${{ steps.digests.outputs.frontend_digest }}
+          push-to-registry: true
+
+      - name: Attest nginx build provenance
+        id: attest-nginx
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ${{ env.ACR_LOGIN_SERVER }}/${{ env.NGINX_IMAGE_NAME }}
+          subject-digest: ${{ steps.digests.outputs.nginx_digest }}
+          push-to-registry: true
+
+      - name: Preserve signed provenance bundles
+        env:
+          API_BUNDLE: ${{ steps.attest-api.outputs.bundle-path }}
+          FRONTEND_BUNDLE: ${{ steps.attest-frontend.outputs.bundle-path }}
+          NGINX_BUNDLE: ${{ steps.attest-nginx.outputs.bundle-path }}
+        run: |
+          cp "$API_BUNDLE" release/api.provenance.sigstore.json
+          cp "$FRONTEND_BUNDLE" release/frontend.provenance.sigstore.json
+          cp "$NGINX_BUNDLE" release/nginx.provenance.sigstore.json
+
       - name: Create immutable release manifest
         env:
-          JIRA_KEY: ${{ needs.quality-gate.outputs.jira_key }}
-          PR_NUMBER: ${{ needs.quality-gate.outputs.pr_number }}
+          PR_NUMBER: ${{ needs.validate-source.outputs.pr_number }}
         run: |
           set -euo pipefail
 
@@ -305,7 +262,6 @@ jobs:
 
           jq -n \
             --arg commit "$GITHUB_SHA" \
-            --arg jira_key "$JIRA_KEY" \
             --arg pr_number "$PR_NUMBER" \
             --arg run_id "$GITHUB_RUN_ID" \
             --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
@@ -320,11 +276,17 @@ jobs:
             '{
               schema_version: 1,
               commit: $commit,
-              jira_key: $jira_key,
               pull_request: $pr_number,
               workflow_run_id: ($run_id | tonumber),
               workflow_run_attempt: ($run_attempt | tonumber),
               created_at: $created_at,
+              source_repository: env.GITHUB_REPOSITORY,
+              workflow_url: (env.GITHUB_SERVER_URL + "/" + env.GITHUB_REPOSITORY + "/actions/runs/" + $run_id),
+              evidence: {
+                sboms: ["api.sbom.cdx.json", "frontend.sbom.cdx.json", "nginx.sbom.cdx.json"],
+                provenance: ["api.provenance.sigstore.json", "frontend.provenance.sigstore.json", "nginx.provenance.sigstore.json"],
+                image_scans: ["api-image-security.json", "frontend-image-security.json", "nginx-image-security.json"]
+              },
               images: {
                 api: {
                   repository: $api_repository,
@@ -346,7 +308,7 @@ jobs:
 
           (
             cd release
-            sha256sum release-manifest.json > checksums.txt
+            sha256sum *.json > checksums.txt
           )
 
       - name: Publish release evidence
@@ -356,16 +318,26 @@ jobs:
           path: release/
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
 
       - name: Publish build summary
         run: |
           {
             echo "## Build Release complete"
             echo
-            echo "- Pull Request: #${{ needs.quality-gate.outputs.pr_number }}"
+            echo "- Pull Request: #${{ needs.validate-source.outputs.pr_number }}"
             echo "- Commit: \`$GITHUB_SHA\`"
             echo "- Release tag: \`$RELEASE_TAG\`"
             echo "- API digest: \`${{ steps.digests.outputs.api_digest }}\`"
             echo "- Frontend digest: \`${{ steps.digests.outputs.frontend_digest }}\`"
             echo "- Nginx digest: \`${{ steps.digests.outputs.nginx_digest }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve image scan diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-release-security-evidence
+          path: '*-image-*.json'
+          if-no-files-found: warn
+          retention-days: 90

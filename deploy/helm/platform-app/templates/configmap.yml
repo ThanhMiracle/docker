@@ -20,3 +20,9 @@ data:
   MINIO_PUBLIC_URL: {{ .Values.api.env.MINIO_PUBLIC_URL | quote }}
   MINIO_ENDPOINT_URL: {{ .Values.api.env.MINIO_ENDPOINT_URL | quote }}
   MINIO_AUTO_CREATE_BUCKET: {{ .Values.api.env.MINIO_AUTO_CREATE_BUCKET | quote }}
+
+  {{- range $key, $value := .Values.api.env }}
+  {{- if hasPrefix "AZURE_" $key }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
