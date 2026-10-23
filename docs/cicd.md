@@ -84,17 +84,18 @@ hiện riêng, không nằm trong pipeline provisioning.
 Chạy từ repository bằng GitHub CLI có quyền admin:
 
 ```powershell
-./scripts/configure-github-cicd.ps1 -ProductionReviewer ThanhMiracle -PullRequestApprovals 0
+./scripts/configure-github-cicd.ps1 -ProductionReviewer ThanhMiracle -PullRequestApprovals 1
 ```
 
 Script tạo Environment `production`, required reviewer, hạn chế deployment từ
 `main`, đặt target Container Apps và bảo vệ `main` với PR, required `Quality Gate`,
 conversation resolution, chặn force push/deletion và admin bypass.
 
-`PullRequestApprovals=0` dành cho repository một người: vẫn bắt buộc PR và CI,
-production vẫn phải approve thủ công. Để có independent PR review theo HLD, thêm
-collaborator rồi chạy lại với `-PullRequestApprovals 1`. GitHub không cho tác giả
-tự approve PR. Production reviewer ban đầu được phép duyệt deployment do chính
+Repository yêu cầu ít nhất một người khác review PR trước khi merge, đồng thời
+CI phải đạt. Thêm collaborator có quyền review trước khi merge; GitHub không cho
+tác giả tự approve PR. Script mặc định `PullRequestApprovals=1`, dismiss approval
+cũ khi code thay đổi và yêu cầu người khác approve lần push mới nhất.
+Production reviewer ban đầu được phép duyệt deployment do chính
 mình khởi tạo; có thể chọn reviewer khác và bật prevent self-review trong Settings.
 
 ## Rollback và failure

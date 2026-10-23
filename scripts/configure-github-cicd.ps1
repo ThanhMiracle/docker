@@ -1,7 +1,7 @@
 param(
     [string]$Repository = 'ThanhMiracle/docker',
     [string]$ProductionReviewer = 'ThanhMiracle',
-    [ValidateRange(0, 6)][int]$PullRequestApprovals = 0
+    [ValidateRange(0, 6)][int]$PullRequestApprovals = 1
 )
 $ErrorActionPreference = 'Stop'
 
